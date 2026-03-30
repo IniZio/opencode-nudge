@@ -167,7 +167,7 @@ test('loadContinueNudgeConfig compiles configured regexes', async () => {
       userOptOutPatterns: ['ask me first'],
       semanticFallback: {
         enabled: true,
-        model: 'openai/gpt-5.1-codex-mini',
+        model: 'github-copilot/gpt-5.1-codex-mini',
         mode: 'out_of_band',
         timeoutMs: 2500,
         maxChecksPerSession: 2,
@@ -182,10 +182,19 @@ test('loadContinueNudgeConfig compiles configured regexes', async () => {
   assert.equal(config.hardStopPatterns[0].test('blocked'), true);
   assert.equal(config.userOptOutPatterns[0].test('ask me first'), true);
   assert.equal(config.semanticFallback.enabled, true);
-  assert.equal(config.semanticFallback.model, 'openai/gpt-5.1-codex-mini');
+  assert.equal(config.semanticFallback.model, 'github-copilot/gpt-5.1-codex-mini');
   assert.equal(config.semanticFallback.mode, 'out_of_band');
   assert.equal(config.semanticFallback.timeoutMs, 2500);
   assert.equal(config.semanticFallback.maxChecksPerSession, 2);
+});
+
+test('repository default config enables semantic fallback with small model', async () => {
+  const config = await loadContinueNudgeConfig('.opencode/continue-nudge.json');
+  assert.equal(config.semanticFallback.enabled, true);
+  assert.equal(config.semanticFallback.model, 'github-copilot/gpt-5.1-codex-mini');
+  assert.equal(config.semanticFallback.mode, 'in_session');
+  assert.equal(config.semanticFallback.timeoutMs, 4000);
+  assert.equal(config.semanticFallback.maxChecksPerSession, 1);
 });
 
 test('shouldNudge returns true for permission-seeking language', () => {
@@ -242,9 +251,11 @@ test('shouldNudge catches multiple common permission-seeking phrasings', () => {
     'If you want, next I\u2019ll implement the remaining handlers.',
     'If you want, next I will implement the remaining handlers.',
     'Next I can implement the remaining handlers.',
+    'Next concrete step I can do now: implement the remaining handlers.',
     'Next high-value step: implement the remaining handlers.',
     'Natural next steps: 1) add tests 2) wire CI',
     'Next logical step: implement the remaining handlers.',
+    "I'll continue with the remaining handlers now.",
     'Want me to add tests too?',
     'What would you like me to tackle next?',
   ];
@@ -458,7 +469,7 @@ test('default semantic fallback classifier uses session prompt and model overrid
   const runtime = createContinueNudgeRuntime(client, {
     semanticFallback: {
       enabled: true,
-      model: 'openai/gpt-5.1-codex-mini',
+      model: 'github-copilot/gpt-5.1-codex-mini',
       timeoutMs: 2000,
       maxChecksPerSession: 1,
     },
@@ -473,7 +484,7 @@ test('default semantic fallback classifier uses session prompt and model overrid
 
   assert.equal(promptCalls.length, 2);
   assert.match(promptCalls[0].body.parts[0].text, /Classify if this assistant message/);
-  assert.equal(promptCalls[0].body.model.providerID, 'openai');
+  assert.equal(promptCalls[0].body.model.providerID, 'github-copilot');
   assert.equal(promptCalls[0].body.model.modelID, 'gpt-5.1-codex-mini');
   assert.equal(promptCalls[0].path.id, 'session-semantic-default');
   assert.match(promptCalls[1].body.parts[0].text, /continue working now/i);
@@ -531,7 +542,7 @@ test('default semantic fallback classifier supports out-of-band mode', async () 
     semanticFallback: {
       enabled: true,
       mode: 'out_of_band',
-      model: 'openai/gpt-5.1-codex-mini',
+      model: 'github-copilot/gpt-5.1-codex-mini',
       timeoutMs: 2000,
       maxChecksPerSession: 1,
     },
@@ -594,7 +605,7 @@ test('semantic fallback tracks fallback-to-in-session metric when out-of-band se
     semanticFallback: {
       enabled: true,
       mode: 'out_of_band',
-      model: 'openai/gpt-5.1-codex-mini',
+      model: 'github-copilot/gpt-5.1-codex-mini',
       timeoutMs: 2000,
       maxChecksPerSession: 1,
     },

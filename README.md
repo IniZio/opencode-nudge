@@ -27,7 +27,7 @@ Default config in `.opencode/continue-nudge.json`:
   "preset": "balanced",
   "semanticFallback": {
     "enabled": false,
-    "model": "openai/gpt-5.1-codex-mini",
+    "model": "github-copilot/gpt-5.1-codex-mini",
     "mode": "in_session",
     "timeoutMs": 4000,
     "maxChecksPerSession": 1
@@ -135,7 +135,7 @@ You can enable a cheap semantic classifier for long-tail phrasing that misses re
   "preset": "balanced",
   "semanticFallback": {
     "enabled": true,
-    "model": "openai/gpt-5.1-codex-mini",
+    "model": "github-copilot/gpt-5.1-codex-mini",
     "mode": "out_of_band",
     "timeoutMs": 4000,
     "maxChecksPerSession": 1

@@ -269,6 +269,16 @@ async function main() {
         triggerSentence: 'Next high-value step: add regression coverage for permission-seeking outputs.',
         shouldExpectNudge: true,
       },
+      {
+        name: 'next-concrete-step',
+        triggerSentence: 'Next concrete step I can do now: add regression coverage for permission-seeking outputs.',
+        shouldExpectNudge: true,
+      },
+      {
+        name: 'ill-continue-with',
+        triggerSentence: "I'll continue with regression coverage now.",
+        shouldExpectNudge: true,
+      },
     ];
 
     const results = [];

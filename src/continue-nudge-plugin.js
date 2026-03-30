@@ -9,7 +9,7 @@ export const DEFAULT_PRESET = 'balanced';
 
 const DEFAULT_SEMANTIC_FALLBACK_OPTIONS = {
   enabled: false,
-  model: 'openai/gpt-5.1-codex-mini',
+  model: 'github-copilot/gpt-5.1-codex-mini',
   mode: 'in_session',
   timeoutMs: 4000,
   maxChecksPerSession: 1,
@@ -32,9 +32,11 @@ const BASE_PERMISSION_SEEKING_PATTERNS = [
   /\bif you want,?\s*(?:next\s+)?i(?:'|\u2019)?ll\b/i,
   /\bif you want,?\s*(?:next\s+)?i will\b/i,
   /\bnext\s+i can\b/i,
+  /\bnext\s+concrete\s+step\s+i\s+can\s+do\s+now:?\b/i,
   /\bnext\s+high[-\s]?value\s+step:?\b/i,
   /\bnatural next steps:?\b/i,
   /\bnext logical step:?\b/i,
+  /\bi(?:'|\u2019)?ll continue with\b/i,
   /\bwhat would you like me to\b/i,
   /\bis there any (?:additional|other|specific|particular) (?:constraint|requirement|preference)\b/i,
   /\bany (?:additional|other) constraint\b/i,
