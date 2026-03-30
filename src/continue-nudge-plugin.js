@@ -241,6 +241,7 @@ export function createContinueNudgeRuntime(client, options = {}) {
   const sessionsWithErrors = new Set();
   const nudgesBySession = new Map();
   const nudgedFingerprintsBySession = new Map();
+  const nudgesInFlightBySession = new Set();
   const answeredQuestionsBySession = new Map();
   const primedSessions = new Set();
   const lastMessageBySession = new Map();
@@ -254,6 +255,7 @@ export function createContinueNudgeRuntime(client, options = {}) {
     sessionsWithErrors.delete(sessionId);
     nudgesBySession.delete(sessionId);
     nudgedFingerprintsBySession.delete(sessionId);
+    nudgesInFlightBySession.delete(sessionId);
     answeredQuestionsBySession.delete(sessionId);
     lastMessageBySession.delete(sessionId);
   }
@@ -280,54 +282,70 @@ export function createContinueNudgeRuntime(client, options = {}) {
   }
 
   async function nudgeSession(sessionId) {
-    if (!sessionId || sessionsWithErrors.has(sessionId)) return false;
-
-    const { data: messages = [] } = await client.session.messages({
-      path: { id: sessionId },
-    });
-
-    const lastAssistantMessage = findLastByRole(messages, 'assistant');
-    if (!lastAssistantMessage) return false;
-
-    const latestUserMessage = findLastByRole(messages, 'user');
-    const assistantText = extractTextFromParts(lastAssistantMessage.parts);
-    const latestUserText = extractTextFromParts(latestUserMessage?.parts);
-    const messageFingerprint = lastAssistantMessage.info?.id || fingerprintText(assistantText);
-    const sessionNudgeCount = nudgesBySession.get(sessionId) || 0;
-    const seenFingerprints = nudgedFingerprintsBySession.get(sessionId) || new Set();
-
-    if (
-      !shouldNudge({
-        assistantText,
-        latestUserText,
-        nudgeCount: sessionNudgeCount,
-        hasSeenMessage: seenFingerprints.has(messageFingerprint),
-        maxNudgesPerSession: config.maxNudgesPerSession,
-        permissionSeekingPatterns: config.permissionSeekingPatterns,
-        hardStopPatterns: config.hardStopPatterns,
-        userOptOutPatterns: config.userOptOutPatterns,
-      })
-    ) {
+    if (!sessionId || sessionsWithErrors.has(sessionId) || nudgesInFlightBySession.has(sessionId)) {
       return false;
     }
 
-    await client.session.prompt({
-      path: { id: sessionId },
-      body: {
-        parts: [{ type: 'text', text: buildContinuationPrompt() }],
-      },
-    });
+    nudgesInFlightBySession.add(sessionId);
 
-    seenFingerprints.add(messageFingerprint);
-    nudgedFingerprintsBySession.set(sessionId, seenFingerprints);
-    nudgesBySession.set(sessionId, sessionNudgeCount + 1);
-    await log(client, 'info', 'Sent continuation nudge', {
-      sessionId,
-      nudgeCount: sessionNudgeCount + 1,
-      messageFingerprint,
-      preset: config.preset,
-    });
-    return true;
+    try {
+      const { data: messages = [] } = await client.session.messages({
+        path: { id: sessionId },
+      });
+
+      const lastAssistantMessage = findLastByRole(messages, 'assistant');
+      if (!lastAssistantMessage) return false;
+
+      const latestUserMessage = findLastByRole(messages, 'user');
+      const assistantText = extractTextFromParts(lastAssistantMessage.parts);
+      const latestUserText = extractTextFromParts(latestUserMessage?.parts);
+      const messageFingerprint = lastAssistantMessage.info?.id || fingerprintText(assistantText);
+      const sessionNudgeCount = nudgesBySession.get(sessionId) || 0;
+      const seenFingerprints = nudgedFingerprintsBySession.get(sessionId) || new Set();
+
+      if (
+        !shouldNudge({
+          assistantText,
+          latestUserText,
+          nudgeCount: sessionNudgeCount,
+          hasSeenMessage: seenFingerprints.has(messageFingerprint),
+          maxNudgesPerSession: config.maxNudgesPerSession,
+          permissionSeekingPatterns: config.permissionSeekingPatterns,
+          hardStopPatterns: config.hardStopPatterns,
+          userOptOutPatterns: config.userOptOutPatterns,
+        })
+      ) {
+        return false;
+      }
+
+      const updatedNudgeCount = sessionNudgeCount + 1;
+      seenFingerprints.add(messageFingerprint);
+      nudgedFingerprintsBySession.set(sessionId, seenFingerprints);
+      nudgesBySession.set(sessionId, updatedNudgeCount);
+
+      await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts: [{ type: 'text', text: buildContinuationPrompt() }],
+        },
+      });
+
+      await log(client, 'info', 'Sent continuation nudge', {
+        sessionId,
+        nudgeCount: updatedNudgeCount,
+        messageFingerprint,
+        preset: config.preset,
+      });
+      return true;
+    } catch (error) {
+      await log(client, 'warn', 'Failed to send continuation nudge', {
+        sessionId,
+        error: String(error?.message || error),
+      });
+      return false;
+    } finally {
+      nudgesInFlightBySession.delete(sessionId);
+    }
   }
 
   async function answerQuestion(request) {
@@ -445,6 +463,7 @@ export function createContinueNudgeRuntime(client, options = {}) {
       sessionsWithErrors,
       nudgesBySession,
       nudgedFingerprintsBySession,
+      nudgesInFlightBySession,
       answeredQuestionsBySession,
       primedSessions,
       lastMessageBySession,

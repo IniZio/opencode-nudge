@@ -324,6 +324,76 @@ test('session.idle does not nudge twice for the same assistant message', async (
   assert.equal(promptCalls.length, 1);
 });
 
+test('session.updated re-entry during prompt does not create nudge storms', async () => {
+  const messagesBySession = {
+    'session-race': [
+      textMessage('user', 'Please continue.', 'user-1'),
+      textMessage('assistant', 'I found the issue. Would you like me to implement the fix?', 'assistant-1'),
+    ],
+  };
+
+  const promptCalls = [];
+  const logCalls = [];
+  let runtime;
+
+  const client = {
+    session: {
+      async prompt(payload) {
+        promptCalls.push(payload);
+        if (payload?.body?.parts?.[0]?.text?.includes(CONTINUATION_NUDGE_MARKER)) {
+          messagesBySession['session-race'] = [
+            ...messagesBySession['session-race'],
+            textMessage('user', buildContinuationPrompt(), `plugin-user-${promptCalls.length}`),
+          ];
+          await runtime.event({
+            event: {
+              type: 'session.updated',
+              properties: { info: { id: 'session-race' } },
+            },
+          });
+        }
+        return { data: { ok: true } };
+      },
+      async messages({ path }) {
+        return { data: messagesBySession[path.id] || [] };
+      },
+    },
+    question: {
+      async reply() {
+        return { data: { ok: true } };
+      },
+      async reject() {
+        return { data: { ok: true } };
+      },
+    },
+    app: {
+      async log(payload) {
+        logCalls.push(payload);
+      },
+    },
+  };
+
+  runtime = createContinueNudgeRuntime(client, { preset: 'balanced' });
+
+  await runtime.event({
+    event: {
+      type: 'session.idle',
+      properties: { sessionID: 'session-race' },
+    },
+  });
+
+  const continuationPromptCalls = promptCalls.filter((call) =>
+    call?.body?.parts?.[0]?.text?.includes(CONTINUATION_NUDGE_MARKER),
+  );
+
+  assert.equal(continuationPromptCalls.length, 1);
+  assert.equal(runtime._debug.nudgesBySession.get('session-race'), 1);
+  assert.equal(
+    logCalls.filter((call) => call?.body?.message === 'Sent continuation nudge').length,
+    1,
+  );
+});
+
 test('session.error suppresses nudges until session.updated clears the error', async () => {
   const { client, promptCalls } = createMockClient({
     'session-4': [
