@@ -209,6 +209,7 @@ test('shouldNudge catches multiple common permission-seeking phrasings', () => {
     'If you want, next I\u2019ll implement the remaining handlers.',
     'If you want, next I will implement the remaining handlers.',
     'Natural next steps: 1) add tests 2) wire CI',
+    'Next logical step: implement the remaining handlers.',
     'Want me to add tests too?',
     'What would you like me to tackle next?',
   ];

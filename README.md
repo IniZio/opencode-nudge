@@ -68,6 +68,14 @@ opencode export <session-id> | rg "CONTINUE_NUDGE_PLUGIN"
 
 If present, the plugin injected a continuation nudge in that session.
 
+Detailed session diagnostics:
+
+```bash
+npm run check:nudge -- <session-id>
+```
+
+If no session id is passed, it checks the most recent session.
+
 ## Pattern Detection
 
 The plugin detects these permission-seeking phrases:

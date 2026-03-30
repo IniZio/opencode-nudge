@@ -23,6 +23,7 @@ const BASE_PERMISSION_SEEKING_PATTERNS = [
   /\bif you want,?\s*(?:next\s+)?i(?:'|\u2019)?ll\b/i,
   /\bif you want,?\s*(?:next\s+)?i will\b/i,
   /\bnatural next steps:?\b/i,
+  /\bnext logical step:?\b/i,
   /\bwhat would you like me to\b/i,
   /\bis there any (?:additional|other|specific|particular) (?:constraint|requirement|preference)\b/i,
   /\bany (?:additional|other) constraint\b/i,
