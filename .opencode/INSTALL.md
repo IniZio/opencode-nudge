@@ -65,3 +65,25 @@ opencode debug config --print-logs --log-level INFO | rg -i "opencode-continue-n
 ```
 
 You should see plugin loading lines for `opencode-continue-nudge`.
+
+## Updating behavior
+
+Using `opencode-continue-nudge@git+https://github.com/IniZio/opencode-nudge.git` tracks the default branch and resolves on restart, so updates are picked up automatically when OpenCode refreshes plugins.
+
+For a forced refresh on demand:
+
+```bash
+rm -rf ~/.cache/opencode/node_modules/opencode-continue-nudge
+```
+
+Then restart OpenCode.
+
+To pin a specific version/commit, use a git ref:
+
+```json
+{
+  "plugin": [
+    "opencode-continue-nudge@git+https://github.com/IniZio/opencode-nudge.git#v0.1.0"
+  ]
+}
+```

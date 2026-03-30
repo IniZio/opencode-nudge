@@ -60,6 +60,14 @@ ACP smoke test (end-to-end nudge + continuation):
 npm run test:acp
 ```
 
+Runtime verify in a real session:
+
+```bash
+opencode export <session-id> | rg "CONTINUE_NUDGE_PLUGIN"
+```
+
+If present, the plugin injected a continuation nudge in that session.
+
 ## Pattern Detection
 
 The plugin detects these permission-seeking phrases:
