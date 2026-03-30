@@ -1,0 +1,29 @@
+{
+  "name": "opencode-continue-nudge",
+  "version": "1.0.0",
+  "description": "OpenCode plugin that nudges agents to continue working instead of stopping early with permission-seeking language.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "opencode",
+    "plugin",
+    "agent",
+    "automation",
+    "nudge"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./plugin": "./src/continue-nudge-plugin.js"
+  },
+  "files": [
+    "index.js",
+    "src",
+    ".opencode/plugins/continue-nudge.js",
+    ".opencode/continue-nudge.json",
+    "README.md",
+    "LICENSE"
+  ]
+}
