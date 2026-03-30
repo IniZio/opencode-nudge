@@ -70,13 +70,15 @@ You should see plugin loading lines for `opencode-continue-nudge`.
 
 Using `opencode-continue-nudge@git+https://github.com/IniZio/opencode-nudge.git` tracks the default branch and resolves on restart, so updates are picked up automatically when OpenCode refreshes plugins.
 
-For a forced refresh on demand:
+For a forced refresh on demand (recommended if updates do not appear after restart):
 
 ```bash
-rm -rf ~/.cache/opencode/node_modules/opencode-continue-nudge
+rm -rf ~/.cache/opencode/node_modules/opencode-continue-nudge ~/.cache/opencode/bun.lock
 ```
 
 Then restart OpenCode.
+
+Why this helps: `~/.cache/opencode/bun.lock` can pin an older git commit of the plugin, so clearing only the module directory may still reinstall the old revision.
 
 To pin a specific version/commit, use a git ref:
 
