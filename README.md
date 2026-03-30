@@ -4,47 +4,10 @@ OpenCode plugin that detects permission-seeking stops and nudges the agent to co
 
 ## Installation
 
-### OpenCode (recommended)
-
 Tell OpenCode:
 
 ```
 Fetch and follow instructions from https://raw.githubusercontent.com/IniZio/opencode-nudge/refs/heads/main/.opencode/INSTALL.md
-```
-
-### Manual
-
-Install from git (`git+https`) and register the plugin path:
-
-```bash
-npm install --save-dev git+https://github.com/IniZio/opencode-nudge.git
-```
-
-Then add this plugin entry in `.opencode/opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    "../node_modules/opencode-continue-nudge/.opencode/plugins/continue-nudge.js"
-  ]
-}
-```
-
-Note: plugin paths in `.opencode/opencode.json` are resolved from the `.opencode/` directory, so use `../node_modules/...`.
-
-Project layout after install:
-
-```
-your-project/
-├── node_modules/
-│   └── opencode-continue-nudge/
-│       └── .opencode/
-│           ├── plugins/
-│           │   └── continue-nudge.js
-│           └── continue-nudge.json
-└── .opencode/
-    └── opencode.json
 ```
 
 ## How it works
@@ -124,17 +87,6 @@ The plugin subscribes to:
 - `session.updated` - Proactively checks for permission-seeking
 - `session.completed` - Fallback check at session end
 - `question.asked` - Auto-answers permission-style questions
-
-## Files
-
-```
-src/continue-nudge-plugin.js  # Core implementation
-test/continue-nudge-plugin.test.js  # Tests
-scripts/acp-smoke-run.mjs  # ACP end-to-end smoke test runner
-.opencode/plugins/continue-nudge.js  # Plugin entrypoint
-.opencode/continue-nudge.json  # Config
-.opencode/skills/continue-nudge-acp-testing/SKILL.md  # Self-contained ACP testing workflow
-```
 
 ## License
 
