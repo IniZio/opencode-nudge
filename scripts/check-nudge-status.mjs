@@ -102,7 +102,7 @@ async function main() {
     if (role === 'assistant') {
       assistantFinals.push({ id: message?.info?.id, text });
       if (
-        /\b(if you want,?\s*(next\s+)?i(?:'|\u2019)?ll|if you want,?\s*(next\s+)?i will|would you like me to|should i|natural next steps:?|next logical step:?)/i.test(
+        /\b(if you want,?\s*(next\s+)?i(?:'|\u2019)?ll|if you want,?\s*(next\s+)?i will|next\s+i can|next\s+high[-\s]?value\s+step:?|would you like me to|should i|natural next steps:?|next logical step:?)/i.test(
           text,
         )
       ) {

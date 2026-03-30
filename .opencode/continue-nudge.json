@@ -1,3 +1,10 @@
 {
-  "preset": "balanced"
+  "preset": "balanced",
+  "semanticFallback": {
+    "enabled": false,
+    "model": "openai/gpt-5.1-codex-mini",
+    "mode": "in_session",
+    "timeoutMs": 4000,
+    "maxChecksPerSession": 1
+  }
 }

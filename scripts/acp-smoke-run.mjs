@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -104,6 +104,122 @@ async function waitForFileContains(path, expectedText, timeoutMs = 45000, interv
   return { found: false, content: '' };
 }
 
+function collectAssistantTexts(exported) {
+  return exported.messages
+    .filter((message) => message?.info?.role === 'assistant')
+    .map((message) =>
+      (message.parts || [])
+        .filter((part) => part?.type === 'text' && typeof part?.text === 'string')
+        .map((part) => part.text)
+        .join('\n')
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+function collectMarkerCount(exported) {
+  return exported.messages
+    .flatMap((message) => message.parts || [])
+    .filter((part) => typeof part?.text === 'string' && part.text.includes('CONTINUE_NUDGE_PLUGIN')).length;
+}
+
+async function runScenario({
+  request,
+  projectDir,
+  sandboxRoot,
+  name,
+  triggerSentence,
+  shouldExpectNudge,
+  allowedModelIDs,
+}) {
+  const created = await request('session/new', { cwd: projectDir, mcpServers: [] });
+  if (created?.error) throw new Error(`[${name}] session/new failed: ${JSON.stringify(created.error)}`);
+  const sessionId = created?.result?.sessionId;
+  if (!sessionId) throw new Error(`[${name}] session/new did not return a sessionId`);
+
+  const prompt =
+    `First, reply with exactly this single sentence and nothing else: ${triggerSentence} ` +
+    'Then immediately continue the work in this same session by appending one line `nudge continued` to ACP_OK.txt.';
+
+  const response = await request(
+    'session/prompt',
+    {
+      sessionId,
+      prompt: [{ type: 'text', text: prompt }],
+    },
+    300000,
+  );
+  if (response?.error) throw new Error(`[${name}] session/prompt failed: ${JSON.stringify(response.error)}`);
+
+  if (response?.result?.stopReason !== 'end_turn') {
+    throw new Error(`[${name}] Unexpected stop reason: ${String(response?.result?.stopReason || 'unknown')}`);
+  }
+
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 8000));
+
+  const outputFile = join(projectDir, 'ACP_OK.txt');
+  const waitResult = await waitForFileContains(outputFile, 'nudge continued');
+
+  const exportFile = join(sandboxRoot, `session-export-${name}.json`);
+  await run('opencode', ['export', sessionId], projectDir).then(({ stdout }) => writeFile(exportFile, stdout));
+  const exported = JSON.parse(await readFile(exportFile, 'utf8'));
+
+  const assistantMessages = (exported.messages || []).filter(
+    (message) => message?.info?.role === 'assistant',
+  );
+  const assistantTexts = collectAssistantTexts(exported);
+  const markerCount = collectMarkerCount(exported);
+
+  const modelErrors = assistantMessages
+    .map((message) => ({
+      messageId: message?.info?.id,
+      modelID: message?.info?.modelID,
+      providerID: message?.info?.providerID,
+      errorMessage: message?.info?.error?.data?.message || message?.info?.error?.message || '',
+    }))
+    .filter((item) => item.errorMessage);
+
+  if (modelErrors.length > 0) {
+    throw new Error(
+      `[${name}] Assistant returned model errors: ${modelErrors
+        .map(
+          (item) =>
+            `${item.modelID || 'unknown-model'}:${item.errorMessage || 'unknown-error'} (message=${item.messageId || 'unknown'})`,
+        )
+        .join('; ')}`,
+    );
+  }
+
+  if (Array.isArray(allowedModelIDs) && allowedModelIDs.length > 0) {
+    const unexpectedModel = assistantMessages.find(
+      (message) => message?.info?.modelID && !allowedModelIDs.includes(message.info.modelID),
+    );
+    if (unexpectedModel) {
+      throw new Error(
+        `[${name}] Unexpected assistant modelID=${unexpectedModel.info.modelID}. Allowed: ${allowedModelIDs.join(', ')}`,
+      );
+    }
+  }
+
+  if (shouldExpectNudge && markerCount < 1) {
+    const sample = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : '<none>';
+    throw new Error(`[${name}] No CONTINUE_NUDGE_PLUGIN marker found. Last assistant text: ${sample}`);
+  }
+
+  if (!waitResult.found) {
+    const lastAssistant = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : '<none>';
+    throw new Error(`[${name}] Assistant did not continue work after prompt. Last assistant text: ${lastAssistant}`);
+  }
+
+  await rm(outputFile, { force: true });
+
+  return {
+    name,
+    sessionId,
+    markerCount,
+  };
+}
+
 async function main() {
   const pluginRepoRoot = resolve(process.cwd());
   const sandboxRoot = await mkdtemp(join(tmpdir(), 'continue-nudge-acp-'));
@@ -112,13 +228,19 @@ async function main() {
 
   await mkdir(configDir, { recursive: true });
 
+  const selectedModel = process.env.ACP_MODEL || 'opencode/gpt-5.1-codex-mini';
+  const selectedModelID = selectedModel.split('/').slice(1).join('/');
+  const pluginSpec =
+    process.env.ACP_PLUGIN_SPEC ||
+    `file://${join(pluginRepoRoot, '.opencode/plugins/continue-nudge.js')}`;
+
   await writeFile(
     join(configDir, 'opencode.json'),
     JSON.stringify(
       {
         $schema: 'https://opencode.ai/config.json',
-        model: 'openai/gpt-5.1-codex-mini',
-        plugin: [`file://${join(pluginRepoRoot, '.opencode/plugins/continue-nudge.js')}`],
+        model: selectedModel,
+        plugin: [pluginSpec],
       },
       null,
       2,
@@ -136,63 +258,35 @@ async function main() {
     });
     if (init?.error) throw new Error(`initialize failed: ${JSON.stringify(init.error)}`);
 
-    const created = await request('session/new', { cwd: projectDir, mcpServers: [] });
-    if (created?.error) throw new Error(`session/new failed: ${JSON.stringify(created.error)}`);
-    const sessionId = created?.result?.sessionId;
-    if (!sessionId) throw new Error('session/new did not return a sessionId');
-
-    const prompt =
-      'First, reply with exactly this single sentence and nothing else: If you want, I can also add tests. ' +
-      'Then immediately continue the work in this same session by appending one line `nudge continued` to ACP_OK.txt.';
-
-    const response = await request(
-      'session/prompt',
+    const scenarios = [
       {
-        sessionId,
-        prompt: [{ type: 'text', text: prompt }],
+        name: 'explicit-offer',
+        triggerSentence: 'If you want, I can also add tests.',
+        shouldExpectNudge: true,
       },
-      300000,
-    );
-    if (response?.error) throw new Error(`session/prompt failed: ${JSON.stringify(response.error)}`);
+      {
+        name: 'next-high-value-step',
+        triggerSentence: 'Next high-value step: add regression coverage for permission-seeking outputs.',
+        shouldExpectNudge: true,
+      },
+    ];
 
-    if (response?.result?.stopReason !== 'end_turn') {
-      throw new Error(`Unexpected stop reason: ${String(response?.result?.stopReason || 'unknown')}`);
+    const results = [];
+    for (const scenario of scenarios) {
+      const result = await runScenario({
+        request,
+        projectDir,
+        sandboxRoot,
+        allowedModelIDs: [selectedModelID],
+        ...scenario,
+      });
+      results.push(result);
     }
 
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 8000));
-
-    const exportFile = join(sandboxRoot, 'session-export.json');
-    await run('opencode', ['export', sessionId], projectDir).then(({ stdout }) => writeFile(exportFile, stdout));
-    const exported = JSON.parse(await readFile(exportFile, 'utf8'));
-
-    const assistantTexts = exported.messages
-      .filter((message) => message?.info?.role === 'assistant')
-      .map((message) =>
-        (message.parts || [])
-          .filter((part) => part?.type === 'text' && typeof part?.text === 'string')
-          .map((part) => part.text)
-          .join('\n')
-          .trim(),
-      )
-      .filter(Boolean);
-
-    const markerCount = exported.messages
-      .flatMap((message) => message.parts || [])
-      .filter((part) => typeof part?.text === 'string' && part.text.includes('CONTINUE_NUDGE_PLUGIN')).length;
-
-    const waitResult = await waitForFileContains(join(projectDir, 'ACP_OK.txt'), 'nudge continued');
-    const continued = waitResult.found;
-
-    if (markerCount < 1) {
-      const sample = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : '<none>';
-      throw new Error(`No CONTINUE_NUDGE_PLUGIN marker found in exported session. Last assistant text: ${sample}`);
-    }
-    if (!continued) {
-      const lastAssistant = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : '<none>';
-      throw new Error(`Assistant did not continue work after nudge. Last assistant text: ${lastAssistant}`);
-    }
-
-    console.log(`PASS session=${sessionId} markers=${markerCount} file=${join(projectDir, 'ACP_OK.txt')}`);
+    const summary = results
+      .map((result) => `${result.name}:session=${result.sessionId}:markers=${result.markerCount}`)
+      .join(' ');
+    console.log(`PASS ${summary}`);
   } finally {
     acp.kill('SIGTERM');
     await once(acp, 'exit').catch(() => {});

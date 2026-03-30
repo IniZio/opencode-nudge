@@ -24,7 +24,14 @@ Default config in `.opencode/continue-nudge.json`:
 
 ```json
 {
-  "preset": "balanced"
+  "preset": "balanced",
+  "semanticFallback": {
+    "enabled": false,
+    "model": "openai/gpt-5.1-codex-mini",
+    "mode": "in_session",
+    "timeoutMs": 4000,
+    "maxChecksPerSession": 1
+  }
 }
 ```
 
@@ -60,6 +67,18 @@ ACP smoke test (end-to-end nudge + continuation):
 npm run test:acp
 ```
 
+Optional model override for ACP smoke runs:
+
+```bash
+ACP_MODEL=opencode/gpt-5.1-codex-mini npm run test:acp
+```
+
+Optional plugin override (useful to validate installed git plugin resolution):
+
+```bash
+ACP_PLUGIN_SPEC='opencode-continue-nudge@git+https://github.com/IniZio/opencode-nudge.git' ACP_MODEL=opencode/gpt-5.3-codex npm run test:acp
+```
+
 Runtime verify in a real session:
 
 ```bash
@@ -87,12 +106,46 @@ The plugin detects these permission-seeking phrases:
 - "I can also..."
 - "Is there any additional constraint?"
 
+Additional covered continuation phrasings include:
+
+- "Next I can ..."
+- "Next high-value step: ..."
+
 And respects these hard stops:
 
 - Missing credentials
 - Blocked by permissions
 - Genuine blockers
 - User explicitly says "wait" or "ask first"
+
+## Semantic fallback (optional)
+
+You can enable a cheap semantic classifier for long-tail phrasing that misses regex rules:
+
+```json
+{
+  "preset": "balanced",
+  "semanticFallback": {
+    "enabled": true,
+    "model": "openai/gpt-5.1-codex-mini",
+    "mode": "out_of_band",
+    "timeoutMs": 4000,
+    "maxChecksPerSession": 1
+  }
+}
+```
+
+How it behaves:
+
+- Runs only when regex detection does not trigger
+- Uses per-session/message dedupe to avoid repeated checks
+- Skips marker messages (`CONTINUE_NUDGE_*`) and hard-stop/user opt-out cases
+- Fails closed (timeout/error => no nudge)
+
+`semanticFallback.mode`:
+
+- `in_session` (default): classify in the current session
+- `out_of_band`: try classifying in a short-lived side session and clean it up after use
 
 ## Events
 
