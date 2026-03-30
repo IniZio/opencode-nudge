@@ -20,6 +20,7 @@ const BASE_PERMISSION_SEEKING_PATTERNS = [
   /\bwant me to (?:continue|proceed|go ahead)\b/i,
   /\bwant me to\b/i,
   /\bif you want,? i can\b/i,
+  /\bnatural next steps:?\b/i,
   /\bwhat would you like me to\b/i,
   /\bis there any (?:additional|other|specific|particular) (?:constraint|requirement|preference)\b/i,
   /\bany (?:additional|other) constraint\b/i,
