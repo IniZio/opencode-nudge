@@ -12,8 +12,6 @@ Tell OpenCode:
 Fetch and follow instructions from https://raw.githubusercontent.com/IniZio/opencode-nudge/refs/heads/main/.opencode/INSTALL.md
 ```
 
-The install instructions tell the agent to ask whether you want **Project-level** or **Global-level** setup (defaults to Project-level if no question tool is available).
-
 ### Manual
 
 Install from git (`git+https`) and register the plugin path:
