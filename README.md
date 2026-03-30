@@ -58,6 +58,12 @@ Default config in `.opencode/continue-nudge.json`:
 npm test
 ```
 
+ACP smoke test (end-to-end nudge + continuation):
+
+```bash
+npm run test:acp
+```
+
 ## Pattern Detection
 
 The plugin detects these permission-seeking phrases:
@@ -91,8 +97,10 @@ The plugin subscribes to:
 ```
 src/continue-nudge-plugin.js  # Core implementation
 test/continue-nudge-plugin.test.js  # Tests
+scripts/acp-smoke-run.mjs  # ACP end-to-end smoke test runner
 .opencode/plugins/continue-nudge.js  # Plugin entrypoint
 .opencode/continue-nudge.json  # Config
+.opencode/skills/continue-nudge-acp-testing/SKILL.md  # Self-contained ACP testing workflow
 ```
 
 ## License

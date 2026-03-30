@@ -12,7 +12,8 @@
     "nudge"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "test:acp": "node scripts/acp-smoke-run.mjs"
   },
   "exports": {
     ".": "./index.js",
