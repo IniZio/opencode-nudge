@@ -1,6 +1,0 @@
-{
-  "suggestionMode": "semi_auto",
-  "allowExplicitCommandFallback": true,
-  "workspaceProvider": "nexus",
-  "confirmationRequired": true
-}
