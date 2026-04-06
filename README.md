@@ -27,8 +27,8 @@ Default config in `.opencode/continue-nudge.json`:
   "preset": "balanced",
   "semanticFallback": {
     "enabled": false,
-    "model": "github-copilot/gpt-5.1-codex-mini",
-    "mode": "in_session",
+    "model": "github-copilot/gpt-5.3-codex-mini",
+    "mode": "out_of_band",
     "timeoutMs": 4000,
     "maxChecksPerSession": 1
   }
@@ -70,7 +70,7 @@ npm run test:acp
 Optional model override for ACP smoke runs:
 
 ```bash
-ACP_MODEL=opencode/gpt-5.1-codex-mini npm run test:acp
+ACP_MODEL=opencode/gpt-5.3-codex npm run test:acp
 ```
 
 Optional plugin override (useful to validate installed git plugin resolution):
@@ -103,6 +103,20 @@ npm run check:nudge -- <session-id>
 
 If no session id is passed, it checks the most recent session.
 
+Reliability toolkit tests:
+
+```bash
+npm run test:reliability
+```
+
+Run the reliability loop on an exported session:
+
+```bash
+npm run reliability:loop -- --export /path/to/session-export.json
+```
+
+Artifacts are written under `.opencode/reliability/`.
+
 ## Pattern Detection
 
 The plugin detects these permission-seeking phrases:
@@ -117,6 +131,9 @@ The plugin detects these permission-seeking phrases:
 Additional covered continuation phrasings include:
 
 - "Next I can ..."
+- "If you want, ..."
+- "Next logical step: ..."
+- "I'll proceed ..."
 - "Next high-value step: ..."
 
 And respects these hard stops:
@@ -135,7 +152,7 @@ You can enable a cheap semantic classifier for long-tail phrasing that misses re
   "preset": "balanced",
   "semanticFallback": {
     "enabled": true,
-    "model": "github-copilot/gpt-5.1-codex-mini",
+    "model": "github-copilot/gpt-5.3-codex-mini",
     "mode": "out_of_band",
     "timeoutMs": 4000,
     "maxChecksPerSession": 1
@@ -152,8 +169,9 @@ How it behaves:
 
 `semanticFallback.mode`:
 
-- `in_session` (default): classify in the current session
-- `out_of_band`: try classifying in a short-lived side session and clean it up after use
+- `out_of_band`: classify in a short-lived side session and clean it up after use
+
+`mode` is currently normalized to `out_of_band` to prevent semantic-check prompts from appearing in the main working session.
 
 ## Events
 

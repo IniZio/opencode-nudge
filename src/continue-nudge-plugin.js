@@ -9,8 +9,8 @@ export const DEFAULT_PRESET = 'balanced';
 
 const DEFAULT_SEMANTIC_FALLBACK_OPTIONS = {
   enabled: false,
-  model: 'github-copilot/gpt-5.1-codex-mini',
-  mode: 'in_session',
+  model: 'github-copilot/gpt-5.3-codex-mini',
+  mode: 'out_of_band',
   timeoutMs: 4000,
   maxChecksPerSession: 1,
 };
@@ -28,6 +28,7 @@ const BASE_PERMISSION_SEEKING_PATTERNS = [
   /\bhappy to (?:continue|help with|do)\b/i,
   /\bwant me to (?:continue|proceed|go ahead)\b/i,
   /\bwant me to\b/i,
+  /\bif you want,?\b/i,
   /\bif you want,? i can\b/i,
   /\bif you want,?\s*(?:next\s+)?i(?:'|\u2019)?ll\b/i,
   /\bif you want,?\s*(?:next\s+)?i will\b/i,
@@ -36,6 +37,8 @@ const BASE_PERMISSION_SEEKING_PATTERNS = [
   /\bnext\s+high[-\s]?value\s+step:?\b/i,
   /\bnatural next steps:?\b/i,
   /\bnext logical step:?\b/i,
+  /\bi(?:'|\u2019)?ll proceed\b/i,
+  /\bi will proceed\b/i,
   /\bi(?:'|\u2019)?ll continue with\b/i,
   /\bwhat would you like me to\b/i,
   /\bis there any (?:additional|other|specific|particular) (?:constraint|requirement|preference)\b/i,
@@ -181,7 +184,7 @@ function toFinitePositiveInteger(value, fallback) {
 export function resolveSemanticFallbackOptions(options = {}) {
   const input = options && typeof options === 'object' ? options : {};
   const base = DEFAULT_SEMANTIC_FALLBACK_OPTIONS;
-  const mode = input.mode === 'out_of_band' ? 'out_of_band' : 'in_session';
+  const mode = base.mode;
   return {
     enabled: Boolean(input.enabled),
     model: typeof input.model === 'string' && input.model.trim() ? input.model : base.model,
@@ -373,18 +376,20 @@ async function defaultSemanticClassifier({
   mode,
 }) {
   const parsedModel = parseModelReference(model);
-  const shouldUseOutOfBand = mode === 'out_of_band';
+  const shouldUseOutOfBand = true;
   let targetSessionId = sessionId;
   let createdSessionId = null;
-  let fallbackToInSession = false;
 
   if (shouldUseOutOfBand) {
     createdSessionId = await createSemanticSession(client, sessionId);
-    if (createdSessionId) {
-      targetSessionId = createdSessionId;
-    } else {
-      fallbackToInSession = true;
+    if (!createdSessionId) {
+      return {
+        decision: false,
+        modeUsed: 'out_of_band',
+        fallbackToInSession: false,
+      };
     }
+    targetSessionId = createdSessionId;
   }
 
   try {
@@ -399,11 +404,11 @@ async function defaultSemanticClassifier({
 
     const modelText = extractTextFromParts(promptResult?.data?.parts || []);
     const decision = parseSemanticDecision(modelText);
-    const modeUsed = createdSessionId ? 'out_of_band' : 'in_session';
+    const modeUsed = shouldUseOutOfBand ? 'out_of_band' : 'in_session';
     return {
       decision: Boolean(decision),
       modeUsed,
-      fallbackToInSession,
+      fallbackToInSession: false,
     };
   } finally {
     if (createdSessionId) {
@@ -533,7 +538,7 @@ export function createContinueNudgeRuntime(client, options = {}) {
                   sessionId,
                   messageFingerprint,
                   model: config.semanticFallback.model,
-                  mode: config.semanticFallback.mode,
+                  mode: 'out_of_band',
                 }),
               ),
               new Promise((resolve) => {
@@ -547,7 +552,7 @@ export function createContinueNudgeRuntime(client, options = {}) {
             const modeUsed =
               decisionObject?.modeUsed === 'out_of_band' || decisionObject?.modeUsed === 'in_session'
                 ? decisionObject.modeUsed
-                : config.semanticFallback.mode;
+                : 'out_of_band';
             const fallbackToInSession = Boolean(decisionObject?.fallbackToInSession);
 
             shouldSendNudge = Boolean(classifierDecision);

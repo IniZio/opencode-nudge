@@ -2,8 +2,8 @@
   "preset": "balanced",
   "semanticFallback": {
     "enabled": true,
-    "model": "github-copilot/gpt-5.1-codex-mini",
-    "mode": "in_session",
+    "model": "github-copilot/gpt-5.3-codex-mini",
+    "mode": "out_of_band",
     "timeoutMs": 4000,
     "maxChecksPerSession": 1
   }

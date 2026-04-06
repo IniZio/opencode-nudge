@@ -228,7 +228,7 @@ async function main() {
 
   await mkdir(configDir, { recursive: true });
 
-  const selectedModel = process.env.ACP_MODEL || 'opencode/gpt-5.1-codex-mini';
+  const selectedModel = process.env.ACP_MODEL || 'opencode/gpt-5.3-codex';
   const selectedModelID = selectedModel.split('/').slice(1).join('/');
   const pluginSpec =
     process.env.ACP_PLUGIN_SPEC ||

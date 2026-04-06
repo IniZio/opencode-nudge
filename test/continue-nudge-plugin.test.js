@@ -122,7 +122,7 @@ test('resolveSemanticFallbackOptions normalizes invalid numeric values', () => {
     maxChecksPerSession: -2,
   });
   assert.equal(options.enabled, true);
-  assert.equal(options.mode, 'in_session');
+  assert.equal(options.mode, 'out_of_band');
   assert.equal(options.timeoutMs, 4000);
   assert.equal(options.maxChecksPerSession, 1);
 });
@@ -167,7 +167,7 @@ test('loadContinueNudgeConfig compiles configured regexes', async () => {
       userOptOutPatterns: ['ask me first'],
       semanticFallback: {
         enabled: true,
-        model: 'github-copilot/gpt-5.1-codex-mini',
+        model: 'github-copilot/gpt-5.3-codex-mini',
         mode: 'out_of_band',
         timeoutMs: 2500,
         maxChecksPerSession: 2,
@@ -182,7 +182,7 @@ test('loadContinueNudgeConfig compiles configured regexes', async () => {
   assert.equal(config.hardStopPatterns[0].test('blocked'), true);
   assert.equal(config.userOptOutPatterns[0].test('ask me first'), true);
   assert.equal(config.semanticFallback.enabled, true);
-  assert.equal(config.semanticFallback.model, 'github-copilot/gpt-5.1-codex-mini');
+  assert.equal(config.semanticFallback.model, 'github-copilot/gpt-5.3-codex-mini');
   assert.equal(config.semanticFallback.mode, 'out_of_band');
   assert.equal(config.semanticFallback.timeoutMs, 2500);
   assert.equal(config.semanticFallback.maxChecksPerSession, 2);
@@ -191,8 +191,8 @@ test('loadContinueNudgeConfig compiles configured regexes', async () => {
 test('repository default config enables semantic fallback with small model', async () => {
   const config = await loadContinueNudgeConfig('.opencode/continue-nudge.json');
   assert.equal(config.semanticFallback.enabled, true);
-  assert.equal(config.semanticFallback.model, 'github-copilot/gpt-5.1-codex-mini');
-  assert.equal(config.semanticFallback.mode, 'in_session');
+  assert.equal(config.semanticFallback.model, 'github-copilot/gpt-5.3-codex-mini');
+  assert.equal(config.semanticFallback.mode, 'out_of_band');
   assert.equal(config.semanticFallback.timeoutMs, 4000);
   assert.equal(config.semanticFallback.maxChecksPerSession, 1);
 });
@@ -246,6 +246,7 @@ test('shouldNudge catches multiple common permission-seeking phrasings', () => {
     'Do you prefer I spend the effort on tests first?',
     'Should I focus the improvement on functionality, tests, or documentation?',
     "Let me know if you'd like me to patch this.",
+    'If you want, we can stop here.',
     'If you want, I can update the README too.',
     "If you want, next I'll implement the remaining handlers.",
     'If you want, next I\u2019ll implement the remaining handlers.',
@@ -254,7 +255,9 @@ test('shouldNudge catches multiple common permission-seeking phrasings', () => {
     'Next concrete step I can do now: implement the remaining handlers.',
     'Next high-value step: implement the remaining handlers.',
     'Natural next steps: 1) add tests 2) wire CI',
+    'Next logical step:',
     'Next logical step: implement the remaining handlers.',
+    "I'll proceed with the remaining handlers now.",
     "I'll continue with the remaining handlers now.",
     'Want me to add tests too?',
     'What would you like me to tackle next?',
@@ -376,8 +379,8 @@ test('semantic fallback nudges ambiguous message when classifier says yes', asyn
   assert.match(promptCalls[0].body.parts[0].text, /continue working now/i);
   assert.equal(runtime._debug.semanticChecksBySession.get('session-semantic'), 1);
   assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic'), {
-    inSession: 1,
-    outOfBand: 0,
+    inSession: 0,
+    outOfBand: 1,
     fallbackToInSession: 0,
   });
   assert.equal(
@@ -425,13 +428,13 @@ test('semantic fallback respects max checks per session', async () => {
 
   assert.equal(calls, 1);
   assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic-cap'), {
-    inSession: 1,
-    outOfBand: 0,
+    inSession: 0,
+    outOfBand: 1,
     fallbackToInSession: 0,
   });
 });
 
-test('default semantic fallback classifier uses session prompt and model override', async () => {
+test('semantic classifier always uses out-of-band session even when mode is set to in_session', async () => {
   const messagesBySession = {
     'session-semantic-default': [
       textMessage('user', 'Continue until done.', 'user-1'),
@@ -440,8 +443,16 @@ test('default semantic fallback classifier uses session prompt and model overrid
   };
 
   const promptCalls = [];
+  const deleteCalls = [];
   const client = {
     session: {
+      async create() {
+        return { data: { id: 'session-semantic-check-forced-oob' } };
+      },
+      async delete(payload) {
+        deleteCalls.push(payload);
+        return { data: { ok: true } };
+      },
       async prompt(payload) {
         promptCalls.push(payload);
         if (payload?.body?.parts?.[0]?.text?.includes(SEMANTIC_CHECK_MARKER)) {
@@ -469,7 +480,8 @@ test('default semantic fallback classifier uses session prompt and model overrid
   const runtime = createContinueNudgeRuntime(client, {
     semanticFallback: {
       enabled: true,
-      model: 'github-copilot/gpt-5.1-codex-mini',
+      mode: 'in_session',
+      model: 'github-copilot/gpt-5.3-codex-mini',
       timeoutMs: 2000,
       maxChecksPerSession: 1,
     },
@@ -485,12 +497,14 @@ test('default semantic fallback classifier uses session prompt and model overrid
   assert.equal(promptCalls.length, 2);
   assert.match(promptCalls[0].body.parts[0].text, /Classify if this assistant message/);
   assert.equal(promptCalls[0].body.model.providerID, 'github-copilot');
-  assert.equal(promptCalls[0].body.model.modelID, 'gpt-5.1-codex-mini');
-  assert.equal(promptCalls[0].path.id, 'session-semantic-default');
+  assert.equal(promptCalls[0].body.model.modelID, 'gpt-5.3-codex-mini');
+  assert.equal(promptCalls[0].path.id, 'session-semantic-check-forced-oob');
+  assert.equal(deleteCalls.length, 1);
+  assert.deepEqual(deleteCalls[0], { path: { id: 'session-semantic-check-forced-oob' } });
   assert.match(promptCalls[1].body.parts[0].text, /continue working now/i);
   assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic-default'), {
-    inSession: 1,
-    outOfBand: 0,
+    inSession: 0,
+    outOfBand: 1,
     fallbackToInSession: 0,
   });
 });
@@ -542,7 +556,7 @@ test('default semantic fallback classifier supports out-of-band mode', async () 
     semanticFallback: {
       enabled: true,
       mode: 'out_of_band',
-      model: 'github-copilot/gpt-5.1-codex-mini',
+      model: 'github-copilot/gpt-5.3-codex-mini',
       timeoutMs: 2000,
       maxChecksPerSession: 1,
     },
@@ -566,7 +580,7 @@ test('default semantic fallback classifier supports out-of-band mode', async () 
   });
 });
 
-test('semantic fallback tracks fallback-to-in-session metric when out-of-band setup is unavailable', async () => {
+test('semantic fallback fails closed when out-of-band setup is unavailable', async () => {
   const messagesBySession = {
     'session-semantic-oob-fallback': [
       textMessage('user', 'Continue until done.', 'user-1'),
@@ -605,7 +619,7 @@ test('semantic fallback tracks fallback-to-in-session metric when out-of-band se
     semanticFallback: {
       enabled: true,
       mode: 'out_of_band',
-      model: 'github-copilot/gpt-5.1-codex-mini',
+      model: 'github-copilot/gpt-5.3-codex-mini',
       timeoutMs: 2000,
       maxChecksPerSession: 1,
     },
@@ -618,12 +632,11 @@ test('semantic fallback tracks fallback-to-in-session metric when out-of-band se
     },
   });
 
-  assert.equal(promptCalls.length, 2);
-  assert.equal(promptCalls[0].path.id, 'session-semantic-oob-fallback');
+  assert.equal(promptCalls.length, 0);
   assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic-oob-fallback'), {
-    inSession: 1,
-    outOfBand: 0,
-    fallbackToInSession: 1,
+    inSession: 0,
+    outOfBand: 1,
+    fallbackToInSession: 0,
   });
 });
 

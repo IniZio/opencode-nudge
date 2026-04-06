@@ -15,7 +15,9 @@
   "scripts": {
     "test": "node --test",
     "test:acp": "node scripts/acp-smoke-run.mjs",
-    "check:nudge": "node scripts/check-nudge-status.mjs"
+    "check:nudge": "node scripts/check-nudge-status.mjs",
+    "test:reliability": "node --test packages/opencode-plugin-reliability/test/*.test.js",
+    "reliability:loop": "node scripts/reliability-loop.mjs"
   },
   "exports": {
     ".": "./index.js",

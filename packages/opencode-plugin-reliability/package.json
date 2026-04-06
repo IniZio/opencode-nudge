@@ -1,0 +1,20 @@
+{
+  "name": "@inizio/opencode-plugin-reliability",
+  "version": "0.1.0",
+  "description": "Reliability toolkit for OpenCode plugins",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "opencode-reliability": "./src/cli.js"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
