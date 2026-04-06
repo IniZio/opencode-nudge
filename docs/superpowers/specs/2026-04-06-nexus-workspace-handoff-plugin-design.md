@@ -161,10 +161,15 @@ Phase 1:
 - Integrate Nexus prepare call and transferred prompt confirmation gate.
 
 Phase 2:
-- Extract/solidify portable handoff contract package.
-- Add adapter test harness to validate cross-agent compatibility.
+- Study `obra/superpowers` subtree and skill composition patterns for pre-handoff preparation behavior.
+- Define and validate a reusable pre-handoff skill bundle for OpenCode Nexus flow.
+- Keep implementation OpenCode-focused while capturing portability constraints as non-blocking notes.
 
 Phase 3:
+- Extract/solidify portable handoff contract package from validated OpenCode + skill flow.
+- Add adapter test harness to validate cross-agent compatibility.
+
+Phase 4:
 - Implement Codex/Claude adapters against the same core contract.
 
 ## Risks and Mitigations
