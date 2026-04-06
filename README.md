@@ -18,6 +18,17 @@ Fetch and follow instructions from https://raw.githubusercontent.com/IniZio/open
 4. **Auto-nudge** - Posts a continuation prompt when detected
 5. **Question handling** - Auto-answers permission-style questions on `question.asked`
 
+## Nexus Handoff Plugin
+
+This repo now also includes a thin `/handoff` plugin at `packages/opencode-nexus-handoff`.
+
+- Purpose: prepare a Nexus workspace and hand off work into a fresh OpenCode session.
+- Safety: transferred handoff prompt always tells the next session to wait for explicit user confirmation before edits.
+- Triggering: semi-automatic suggestion flow with explicit `/handoff <goal>` fallback.
+- Scope: plugin remains thin; workspace orchestration is delegated to Nexus tooling.
+
+Current layout keeps the plugin in this repository path for iteration speed. The intended end state is a standalone repository for `opencode-nexus-handoff`.
+
 ## Configuration
 
 Default config in `.opencode/continue-nudge.json`:

@@ -27,8 +27,11 @@
     "index.js",
     "src",
     "packages/opencode-continue-nudge",
+    "packages/opencode-nexus-handoff",
     ".opencode/plugins/continue-nudge.js",
+    ".opencode/plugins/nexus-handoff.js",
     ".opencode/continue-nudge.json",
+    ".opencode/nexus-handoff.json",
     "README.md",
     "LICENSE"
   ]
