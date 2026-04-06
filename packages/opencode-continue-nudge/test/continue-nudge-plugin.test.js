@@ -72,13 +72,13 @@ function textMessage(role, text, id) {
   };
 }
 
-test('package entrypoint re-exports the plugin helpers', async () => {
+test('package and root entrypoints re-export the plugin helpers', async () => {
   const mod = await import('../index.js');
-  const pkgMod = await import('../packages/opencode-continue-nudge/index.js');
+  const rootMod = await import('../../../index.js');
   assert.equal(typeof mod.createContinueNudgePlugin, 'function');
   assert.equal(typeof mod.loadContinueNudgeConfig, 'function');
-  assert.equal(typeof pkgMod.createContinueNudgePlugin, 'function');
-  assert.equal(typeof pkgMod.loadContinueNudgeConfig, 'function');
+  assert.equal(typeof rootMod.createContinueNudgePlugin, 'function');
+  assert.equal(typeof rootMod.loadContinueNudgeConfig, 'function');
 });
 
 test('normalizeText preserves zero and false inputs', () => {
@@ -966,4 +966,102 @@ test('default semantic classifier call is ignored for marker messages', async ()
 
   assert.equal(promptCalls.length, 0);
   assert.equal(runtime._debug.semanticChecksBySession.get('session-semantic-marker') || 0, 0);
+});
+
+test('session.completed flushes reliability artifacts in shadow mode', async () => {
+  const flushCalls = [];
+  const { client } = createMockClient({
+    'session-flush': [
+      textMessage('user', 'Continue until done.', 'user-1'),
+      textMessage('assistant', 'Would you like me to implement the fix now?', 'assistant-1'),
+    ],
+  });
+
+  const runtime = createContinueNudgeRuntime(client, {
+    reliabilityRuntime: { enabled: true, flushOnSessionEnd: true, mode: 'shadow' },
+    reliabilityRuntimeFactory: () => ({
+      evaluateNudgeDecision: async ({ shouldNudge }) => ({ shouldNudge }),
+      flushSession: async (payload) => {
+        flushCalls.push(payload);
+        return {
+          wroteArtifacts: true,
+          verdict: 'pass',
+          reasonCodes: ['GATE_PASS'],
+          runId: 'run-1',
+        };
+      },
+      clearSession: () => {},
+    }),
+  });
+
+  await runtime.event({
+    event: {
+      type: 'session.completed',
+      properties: { info: { id: 'session-flush' } },
+    },
+  });
+
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0].sessionId, 'session-flush');
+  assert.equal(Array.isArray(flushCalls[0].events), true);
+  assert.equal(flushCalls[0].events.length, 2);
+});
+
+test('enforce mode can block a nudge decision', async () => {
+  const { client, promptCalls } = createMockClient({
+    'session-enforce': [
+      textMessage('user', 'Continue until done.', 'user-1'),
+      textMessage('assistant', 'Would you like me to implement the fix now?', 'assistant-1'),
+    ],
+  });
+
+  const runtime = createContinueNudgeRuntime(client, {
+    reliabilityRuntime: { enabled: true, mode: 'enforce' },
+    reliabilityRuntimeFactory: () => ({
+      evaluateNudgeDecision: async () => ({
+        shouldNudge: false,
+        reason: 'reduce_nudge_aggressiveness',
+      }),
+      flushSession: async () => ({ wroteArtifacts: false }),
+      clearSession: () => {},
+    }),
+  });
+
+  await runtime.event({
+    event: {
+      type: 'session.idle',
+      properties: { sessionID: 'session-enforce' },
+    },
+  });
+
+  assert.equal(promptCalls.length, 0);
+});
+
+test('reliability flush errors fail open without crashing event handling', async () => {
+  const { client } = createMockClient({
+    'session-flush-error': [
+      textMessage('user', 'Continue until done.', 'user-1'),
+      textMessage('assistant', 'Would you like me to implement the fix now?', 'assistant-1'),
+    ],
+  });
+
+  const runtime = createContinueNudgeRuntime(client, {
+    reliabilityRuntime: { enabled: true, flushOnSessionEnd: true },
+    reliabilityRuntimeFactory: () => ({
+      evaluateNudgeDecision: async ({ shouldNudge }) => ({ shouldNudge }),
+      flushSession: async () => {
+        throw new Error('flush failed');
+      },
+      clearSession: () => {},
+    }),
+  });
+
+  await assert.doesNotReject(async () => {
+    await runtime.event({
+      event: {
+        type: 'session.completed',
+        properties: { info: { id: 'session-flush-error' } },
+      },
+    });
+  });
 });

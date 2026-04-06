@@ -26,11 +26,17 @@ Default config in `.opencode/continue-nudge.json`:
 {
   "preset": "balanced",
   "semanticFallback": {
-    "enabled": false,
+    "enabled": true,
     "model": "github-copilot/gpt-5.3-codex-mini",
     "mode": "out_of_band",
     "timeoutMs": 4000,
     "maxChecksPerSession": 1
+  },
+  "reliabilityRuntime": {
+    "enabled": true,
+    "mode": "shadow",
+    "artifactRoot": ".opencode/reliability",
+    "flushOnSessionEnd": true
   }
 }
 ```
@@ -64,8 +70,23 @@ npm test
 ACP smoke test (end-to-end nudge + continuation):
 
 ```bash
+ACP_MODEL=github-copilot/gpt-5.3-codex npm run test:acp
+
+# or rely on default ACP model in the script
 npm run test:acp
 ```
+
+ACP smoke now validates both plugin resolution paths by default:
+
+- local package plugin (`file://.../packages/opencode-continue-nudge/.opencode/plugins/continue-nudge.js`)
+- installed git plugin (`opencode-continue-nudge@git+https://github.com/IniZio/opencode-nudge.git`)
+
+Each path asserts:
+
+- continuation marker behavior (`CONTINUE_NUDGE_PLUGIN`) for nudge scenarios,
+- no marker for hard-stop non-nudge scenario,
+- continuation action (`ACP_OK.txt`),
+- reliability artifacts (`.opencode/reliability/scoreboard.json`, run artifacts, verdict, reason codes).
 
 Optional model override for ACP smoke runs:
 
@@ -77,6 +98,12 @@ Optional plugin override (useful to validate installed git plugin resolution):
 
 ```bash
 ACP_PLUGIN_SPEC='opencode-continue-nudge@git+https://github.com/IniZio/opencode-nudge.git' ACP_MODEL=opencode/gpt-5.3-codex npm run test:acp
+```
+
+Optional explicit local-package override:
+
+```bash
+ACP_PLUGIN_SPEC_LOCAL='file:///absolute/path/to/repo/packages/opencode-continue-nudge/.opencode/plugins/continue-nudge.js' npm run test:acp
 ```
 
 Force-refresh installed plugin cache (if updates do not appear after restart):

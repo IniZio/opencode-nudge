@@ -11,6 +11,8 @@
   },
   "files": [
     "index.js",
+    "src",
+    "test",
     ".opencode"
   ]
 }

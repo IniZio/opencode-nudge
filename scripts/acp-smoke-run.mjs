@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -104,6 +104,42 @@ async function waitForFileContains(path, expectedText, timeoutMs = 45000, interv
   return { found: false, content: '' };
 }
 
+async function assertReliabilityArtifacts(projectDir, label) {
+  const reliabilityDir = join(projectDir, '.opencode', 'reliability');
+  const scoreboardPath = join(reliabilityDir, 'scoreboard.json');
+
+  await stat(scoreboardPath).catch(() => {
+    throw new Error(`[${label}] Missing reliability scoreboard at ${scoreboardPath}`);
+  });
+
+  const scoreboard = JSON.parse(await readFile(scoreboardPath, 'utf8'));
+  const runs = Array.isArray(scoreboard?.runs) ? scoreboard.runs : [];
+  if (runs.length === 0) {
+    throw new Error(`[${label}] Reliability scoreboard has no runs`);
+  }
+
+  const latest = runs[runs.length - 1] || {};
+  if (typeof latest.verdict !== 'string' || latest.verdict.length === 0) {
+    throw new Error(`[${label}] Latest reliability run is missing verdict`);
+  }
+  if (!Array.isArray(latest.reasonCodes) || latest.reasonCodes.length === 0) {
+    throw new Error(`[${label}] Latest reliability run is missing reason codes`);
+  }
+
+  const runsDir = join(reliabilityDir, 'runs');
+  const runIds = await readdir(runsDir).catch(() => []);
+  if (runIds.length === 0) {
+    throw new Error(`[${label}] Reliability run artifacts directory is empty`);
+  }
+
+  return {
+    scoreboardPath,
+    latestVerdict: latest.verdict,
+    latestReasonCodes: latest.reasonCodes,
+    runCount: runs.length,
+  };
+}
+
 function collectAssistantTexts(exported) {
   return exported.messages
     .filter((message) => message?.info?.role === 'assistant')
@@ -206,6 +242,11 @@ async function runScenario({
     throw new Error(`[${name}] No CONTINUE_NUDGE_PLUGIN marker found. Last assistant text: ${sample}`);
   }
 
+  if (!shouldExpectNudge && markerCount > 0) {
+    const sample = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : '<none>';
+    throw new Error(`[${name}] Unexpected CONTINUE_NUDGE_PLUGIN marker for non-nudge scenario. Last assistant text: ${sample}`);
+  }
+
   if (!waitResult.found) {
     const lastAssistant = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : '<none>';
     throw new Error(`[${name}] Assistant did not continue work after prompt. Last assistant text: ${lastAssistant}`);
@@ -223,84 +264,122 @@ async function runScenario({
 async function main() {
   const pluginRepoRoot = resolve(process.cwd());
   const sandboxRoot = await mkdtemp(join(tmpdir(), 'continue-nudge-acp-'));
-  const projectDir = join(sandboxRoot, 'project');
-  const configDir = join(projectDir, '.opencode');
 
-  await mkdir(configDir, { recursive: true });
-
-  const selectedModel = process.env.ACP_MODEL || 'opencode/gpt-5.3-codex';
+  const selectedModel = process.env.ACP_MODEL || 'github-copilot/gpt-5.3-codex';
   const selectedModelID = selectedModel.split('/').slice(1).join('/');
-  const pluginSpec =
-    process.env.ACP_PLUGIN_SPEC ||
-    `file://${join(pluginRepoRoot, '.opencode/plugins/continue-nudge.js')}`;
+  const localPackagePluginSpec =
+    process.env.ACP_PLUGIN_SPEC_LOCAL ||
+    `file://${join(pluginRepoRoot, 'packages/opencode-continue-nudge/.opencode/plugins/continue-nudge.js')}`;
+  const gitPluginSpec =
+    process.env.ACP_PLUGIN_SPEC_GIT ||
+    'opencode-continue-nudge@git+https://github.com/IniZio/opencode-nudge.git';
 
-  await writeFile(
-    join(configDir, 'opencode.json'),
-    JSON.stringify(
-      {
-        $schema: 'https://opencode.ai/config.json',
-        model: selectedModel,
-        plugin: [pluginSpec],
-      },
-      null,
-      2,
-    ),
-  );
+  const pluginSpecs = process.env.ACP_PLUGIN_SPEC
+    ? [{ label: 'custom', spec: process.env.ACP_PLUGIN_SPEC }]
+    : [
+        { label: 'local-package', spec: localPackagePluginSpec },
+        { label: 'git-install', spec: gitPluginSpec },
+      ];
 
-  const acp = spawn('opencode', ['acp'], { cwd: projectDir, stdio: ['pipe', 'pipe', 'pipe'] });
-  const { request } = makeRequestDriver(acp);
+  const scenarios = [
+    {
+      name: 'explicit-offer',
+      triggerSentence: 'If you want, I can also add tests.',
+      shouldExpectNudge: true,
+    },
+    {
+      name: 'next-high-value-step',
+      triggerSentence: 'Next high-value step: add regression coverage for permission-seeking outputs.',
+      shouldExpectNudge: true,
+    },
+    {
+      name: 'next-concrete-step',
+      triggerSentence: 'Next concrete step I can do now: add regression coverage for permission-seeking outputs.',
+      shouldExpectNudge: true,
+    },
+    {
+      name: 'ill-continue-with',
+      triggerSentence: "I'll continue with regression coverage now.",
+      shouldExpectNudge: true,
+    },
+    {
+      name: 'hard-stop',
+      triggerSentence: 'Cannot proceed because credentials are missing.',
+      shouldExpectNudge: false,
+    },
+  ];
 
-  try {
-    const init = await request('initialize', {
-      protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
-      clientInfo: { name: 'continue-nudge-smoke-test', title: 'Continue Nudge Smoke Test', version: '1.0.0' },
-    });
-    if (init?.error) throw new Error(`initialize failed: ${JSON.stringify(init.error)}`);
+  const suiteResults = [];
+  for (let index = 0; index < pluginSpecs.length; index += 1) {
+    const target = pluginSpecs[index];
+    const suiteName = `${index + 1}-${target.label}`;
+    const projectDir = join(sandboxRoot, `project-${suiteName}`);
+    const configDir = join(projectDir, '.opencode');
+    await mkdir(configDir, { recursive: true });
 
-    const scenarios = [
-      {
-        name: 'explicit-offer',
-        triggerSentence: 'If you want, I can also add tests.',
-        shouldExpectNudge: true,
-      },
-      {
-        name: 'next-high-value-step',
-        triggerSentence: 'Next high-value step: add regression coverage for permission-seeking outputs.',
-        shouldExpectNudge: true,
-      },
-      {
-        name: 'next-concrete-step',
-        triggerSentence: 'Next concrete step I can do now: add regression coverage for permission-seeking outputs.',
-        shouldExpectNudge: true,
-      },
-      {
-        name: 'ill-continue-with',
-        triggerSentence: "I'll continue with regression coverage now.",
-        shouldExpectNudge: true,
-      },
-    ];
+    await writeFile(
+      join(configDir, 'opencode.json'),
+      JSON.stringify(
+        {
+          $schema: 'https://opencode.ai/config.json',
+          model: selectedModel,
+          plugin: [target.spec],
+        },
+        null,
+        2,
+      ),
+    );
 
-    const results = [];
-    for (const scenario of scenarios) {
-      const result = await runScenario({
-        request,
-        projectDir,
-        sandboxRoot,
-        allowedModelIDs: [selectedModelID],
-        ...scenario,
+    const acp = spawn('opencode', ['acp'], { cwd: projectDir, stdio: ['pipe', 'pipe', 'pipe'] });
+    const { request } = makeRequestDriver(acp);
+
+    try {
+      const init = await request('initialize', {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+        clientInfo: { name: 'continue-nudge-smoke-test', title: 'Continue Nudge Smoke Test', version: '1.0.0' },
       });
-      results.push(result);
-    }
+      if (init?.error) {
+        throw new Error(`[${target.label}] initialize failed: ${JSON.stringify(init.error)}`);
+      }
 
-    const summary = results
-      .map((result) => `${result.name}:session=${result.sessionId}:markers=${result.markerCount}`)
-      .join(' ');
-    console.log(`PASS ${summary}`);
-  } finally {
-    acp.kill('SIGTERM');
-    await once(acp, 'exit').catch(() => {});
+      const results = [];
+      for (const scenario of scenarios) {
+        const result = await runScenario({
+          request,
+          projectDir,
+          sandboxRoot,
+          name: `${suiteName}-${scenario.name}`,
+          allowedModelIDs: [selectedModelID],
+          ...scenario,
+        });
+        results.push(result);
+      }
+
+      const artifacts = await assertReliabilityArtifacts(projectDir, target.label);
+
+      suiteResults.push({
+        label: target.label,
+        pluginSpec: target.spec,
+        scenarios: results,
+        artifacts,
+      });
+    } finally {
+      acp.kill('SIGTERM');
+      await once(acp, 'exit').catch(() => {});
+    }
   }
+
+  const summary = suiteResults
+    .map((suite) => {
+      const markerSummary = suite.scenarios
+        .map((scenario) => `${scenario.name}:${scenario.markerCount}`)
+        .join(',');
+      return `${suite.label}[${markerSummary}] verdict=${suite.artifacts.latestVerdict} reasons=${suite.artifacts.latestReasonCodes.join('+')}`;
+    })
+    .join(' ');
+
+  console.log(`PASS ${summary}`);
 }
 
 main().catch((error) => {

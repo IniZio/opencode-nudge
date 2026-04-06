@@ -1,4 +1,4 @@
 export {
   createContinueNudgePlugin,
   loadContinueNudgeConfig,
-} from '../../src/continue-nudge-plugin.js';
+} from './src/continue-nudge-plugin.js';
