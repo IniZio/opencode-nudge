@@ -1,10 +1,10 @@
 import {
   createContinueNudgePlugin,
   loadContinueNudgeConfig,
-} from '../../packages/opencode-continue-nudge/index.js';
+} from '../../../../src/continue-nudge-plugin.js';
 
 export const ContinueNudgePlugin = async (context) => {
-  const options = await loadContinueNudgeConfig(new URL('../continue-nudge.json', import.meta.url));
+  const options = await loadContinueNudgeConfig(new URL('../../../../.opencode/continue-nudge.json', import.meta.url));
   return createContinueNudgePlugin(options)(context);
 };
 

@@ -1,1 +1,1 @@
-export * from './src/continue-nudge-plugin.js';
+export * from './packages/opencode-continue-nudge/index.js';

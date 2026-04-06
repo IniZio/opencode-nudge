@@ -1,0 +1,16 @@
+{
+  "name": "@inizio/opencode-continue-nudge",
+  "version": "0.1.0",
+  "description": "Package implementation for opencode continue-nudge plugin",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./plugin": "./.opencode/plugins/continue-nudge.js"
+  },
+  "files": [
+    "index.js",
+    ".opencode"
+  ]
+}

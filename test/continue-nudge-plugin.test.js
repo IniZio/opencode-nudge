@@ -74,8 +74,11 @@ function textMessage(role, text, id) {
 
 test('package entrypoint re-exports the plugin helpers', async () => {
   const mod = await import('../index.js');
+  const pkgMod = await import('../packages/opencode-continue-nudge/index.js');
   assert.equal(typeof mod.createContinueNudgePlugin, 'function');
   assert.equal(typeof mod.loadContinueNudgeConfig, 'function');
+  assert.equal(typeof pkgMod.createContinueNudgePlugin, 'function');
+  assert.equal(typeof pkgMod.loadContinueNudgeConfig, 'function');
 });
 
 test('normalizeText preserves zero and false inputs', () => {
