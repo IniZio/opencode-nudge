@@ -31,6 +31,7 @@ const BASE_PERMISSION_SEEKING_PATTERNS = [
   /\bi(?:'|\u2019)?ll proceed\b/i,
   /\bi will proceed\b/i,
   /\bi(?:'|\u2019)?ll continue with\b/i,
+  /\bi(?:'|\u2019)?ll then\b/i,
   /\bwhat would you like me to\b/i,
   /\bis there any (?:additional|other|specific|particular) (?:constraint|requirement|preference)\b/i,
   /\bany (?:additional|other) constraint\b/i,
