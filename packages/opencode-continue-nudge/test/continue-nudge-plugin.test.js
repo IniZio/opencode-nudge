@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  buildSemanticCheckPrompt,
   buildQuestionAutoAnswer,
   buildContinuationPrompt,
   buildSystemReminder,
@@ -18,9 +17,7 @@ import {
   loadContinueNudgeConfig,
   normalizeText,
   PRESET_OPTIONS,
-  resolveSemanticFallbackOptions,
   resolveContinueNudgeOptions,
-  SEMANTIC_CHECK_MARKER,
   shouldNudge,
   SYSTEM_REMINDER_MARKER,
 } from '../src/continue-nudge-plugin.js';
@@ -115,24 +112,6 @@ test('resolveContinueNudgeOptions uses the default preset', () => {
   const config = resolveContinueNudgeOptions();
   assert.equal(config.preset, DEFAULT_PRESET);
   assert.equal(config.maxNudgesPerSession, PRESET_OPTIONS[DEFAULT_PRESET].maxNudgesPerSession);
-  assert.equal(config.semanticFallback.enabled, false);
-});
-
-test('resolveSemanticFallbackOptions normalizes invalid numeric values', () => {
-  const options = resolveSemanticFallbackOptions({
-    enabled: true,
-    timeoutMs: 0,
-    maxChecksPerSession: -2,
-  });
-  assert.equal(options.enabled, true);
-  assert.equal(options.mode, 'out_of_band');
-  assert.equal(options.timeoutMs, 4000);
-  assert.equal(options.maxChecksPerSession, 1);
-});
-
-test('resolveSemanticFallbackOptions keeps supported out_of_band mode', () => {
-  const options = resolveSemanticFallbackOptions({ enabled: true, mode: 'out_of_band' });
-  assert.equal(options.mode, 'out_of_band');
 });
 
 test('resolveContinueNudgeOptions treats null max nudges as unlimited', () => {
@@ -168,13 +147,6 @@ test('loadContinueNudgeConfig compiles configured regexes', async () => {
       permissionSeekingPatterns: ['continue\\?'],
       hardStopPatterns: [{ source: 'BLOCKED', flags: 'i' }],
       userOptOutPatterns: ['ask me first'],
-      semanticFallback: {
-        enabled: true,
-        model: 'github-copilot/gpt-5.3-codex-mini',
-        mode: 'out_of_band',
-        timeoutMs: 2500,
-        maxChecksPerSession: 2,
-      },
     }),
   );
 
@@ -184,20 +156,6 @@ test('loadContinueNudgeConfig compiles configured regexes', async () => {
   assert.equal(config.permissionSeekingPatterns[0].test('continue?'), true);
   assert.equal(config.hardStopPatterns[0].test('blocked'), true);
   assert.equal(config.userOptOutPatterns[0].test('ask me first'), true);
-  assert.equal(config.semanticFallback.enabled, true);
-  assert.equal(config.semanticFallback.model, 'github-copilot/gpt-5.3-codex-mini');
-  assert.equal(config.semanticFallback.mode, 'out_of_band');
-  assert.equal(config.semanticFallback.timeoutMs, 2500);
-  assert.equal(config.semanticFallback.maxChecksPerSession, 2);
-});
-
-test('repository default config enables semantic fallback with small model', async () => {
-  const config = await loadContinueNudgeConfig('.opencode/continue-nudge.json');
-  assert.equal(config.semanticFallback.enabled, true);
-  assert.equal(config.semanticFallback.model, 'github-copilot/gpt-5.3-codex-mini');
-  assert.equal(config.semanticFallback.mode, 'out_of_band');
-  assert.equal(config.semanticFallback.timeoutMs, 4000);
-  assert.equal(config.semanticFallback.maxChecksPerSession, 1);
 });
 
 test('shouldNudge returns true for permission-seeking language', () => {
@@ -289,14 +247,6 @@ test('system reminder and continuation prompt include stable markers', () => {
   assert.match(buildQuestionAutoAnswer(), new RegExp(CONTINUATION_NUDGE_MARKER));
 });
 
-test('buildSemanticCheckPrompt includes marker and context', () => {
-  const prompt = buildSemanticCheckPrompt('Next high-value step: add tests.', 'Continue until done.');
-  assert.match(prompt, new RegExp(SEMANTIC_CHECK_MARKER));
-  assert.match(prompt, /YES or NO/);
-  assert.match(prompt, /Latest user message/);
-  assert.match(prompt, /Assistant message/);
-});
-
 test('session.created primes the session with a hidden reminder', async () => {
   const { client, promptCalls } = createMockClient();
   const runtime = createContinueNudgeRuntime(client);
@@ -351,296 +301,6 @@ test('session.idle sends a continuation prompt for a permission-seeking assistan
   assert.equal(promptCalls[0].path.id, 'session-2');
   assert.equal(promptCalls[0].body.noReply, undefined);
   assert.match(promptCalls[0].body.parts[0].text, /continue working now/i);
-});
-
-test('semantic fallback nudges ambiguous message when classifier says yes', async () => {
-  const { client, promptCalls, logCalls } = createMockClient({
-    'session-semantic': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', 'Potential follow-up opportunity identified for this task.', 'assistant-1'),
-    ],
-  });
-
-  const semanticCalls = [];
-  const runtime = createContinueNudgeRuntime(client, {
-    semanticFallback: { enabled: true, maxChecksPerSession: 2 },
-    semanticClassifier: async (payload) => {
-      semanticCalls.push(payload);
-      return true;
-    },
-  });
-
-  await runtime.event({
-    event: {
-      type: 'session.idle',
-      properties: { sessionID: 'session-semantic' },
-    },
-  });
-
-  assert.equal(semanticCalls.length, 1);
-  assert.equal(promptCalls.length, 1);
-  assert.match(promptCalls[0].body.parts[0].text, /continue working now/i);
-  assert.equal(runtime._debug.semanticChecksBySession.get('session-semantic'), 1);
-  assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic'), {
-    inSession: 0,
-    outOfBand: 1,
-    fallbackToInSession: 0,
-  });
-  assert.equal(
-    logCalls.some((call) => call?.body?.message === 'Semantic fallback evaluated message'),
-    true,
-  );
-});
-
-test('semantic fallback respects max checks per session', async () => {
-  const messagesBySession = {
-    'session-semantic-cap': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', 'Potential follow-up opportunity identified for this task.', 'assistant-1'),
-    ],
-  };
-  const { client } = createMockClient(messagesBySession);
-
-  let calls = 0;
-  const runtime = createContinueNudgeRuntime(client, {
-    semanticFallback: { enabled: true, maxChecksPerSession: 1 },
-    semanticClassifier: async () => {
-      calls += 1;
-      return false;
-    },
-  });
-
-  await runtime.event({
-    event: {
-      type: 'session.idle',
-      properties: { sessionID: 'session-semantic-cap' },
-    },
-  });
-
-  messagesBySession['session-semantic-cap'] = [
-    textMessage('user', 'Continue until done.', 'user-1'),
-    textMessage('assistant', 'Potential follow-up opportunity identified for this task.', 'assistant-2'),
-  ];
-
-  await runtime.event({
-    event: {
-      type: 'session.idle',
-      properties: { sessionID: 'session-semantic-cap' },
-    },
-  });
-
-  assert.equal(calls, 1);
-  assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic-cap'), {
-    inSession: 0,
-    outOfBand: 1,
-    fallbackToInSession: 0,
-  });
-});
-
-test('semantic classifier always uses out-of-band session even when mode is set to in_session', async () => {
-  const messagesBySession = {
-    'session-semantic-default': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', 'Potential follow-up opportunity identified for this task.', 'assistant-1'),
-    ],
-  };
-
-  const promptCalls = [];
-  const deleteCalls = [];
-  const client = {
-    session: {
-      async create() {
-        return { data: { id: 'session-semantic-check-forced-oob' } };
-      },
-      async delete(payload) {
-        deleteCalls.push(payload);
-        return { data: { ok: true } };
-      },
-      async prompt(payload) {
-        promptCalls.push(payload);
-        if (payload?.body?.parts?.[0]?.text?.includes(SEMANTIC_CHECK_MARKER)) {
-          return { data: { parts: [{ type: 'text', text: 'YES' }] } };
-        }
-        return { data: { ok: true } };
-      },
-      async messages({ path }) {
-        return { data: messagesBySession[path.id] || [] };
-      },
-    },
-    question: {
-      async reply() {
-        return { data: { ok: true } };
-      },
-      async reject() {
-        return { data: { ok: true } };
-      },
-    },
-    app: {
-      async log() {},
-    },
-  };
-
-  const runtime = createContinueNudgeRuntime(client, {
-    semanticFallback: {
-      enabled: true,
-      mode: 'in_session',
-      model: 'github-copilot/gpt-5.3-codex-mini',
-      timeoutMs: 2000,
-      maxChecksPerSession: 1,
-    },
-  });
-
-  await runtime.event({
-    event: {
-      type: 'session.idle',
-      properties: { sessionID: 'session-semantic-default' },
-    },
-  });
-
-  assert.equal(promptCalls.length, 2);
-  assert.match(promptCalls[0].body.parts[0].text, /Classify if this assistant message/);
-  assert.equal(promptCalls[0].body.model.providerID, 'github-copilot');
-  assert.equal(promptCalls[0].body.model.modelID, 'gpt-5.3-codex-mini');
-  assert.equal(promptCalls[0].path.id, 'session-semantic-check-forced-oob');
-  assert.equal(deleteCalls.length, 1);
-  assert.deepEqual(deleteCalls[0], { path: { id: 'session-semantic-check-forced-oob' } });
-  assert.match(promptCalls[1].body.parts[0].text, /continue working now/i);
-  assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic-default'), {
-    inSession: 0,
-    outOfBand: 1,
-    fallbackToInSession: 0,
-  });
-});
-
-test('default semantic fallback classifier supports out-of-band mode', async () => {
-  const messagesBySession = {
-    'session-semantic-oob': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', 'Potential follow-up opportunity identified for this task.', 'assistant-1'),
-    ],
-  };
-
-  const promptCalls = [];
-  const deleteCalls = [];
-  const client = {
-    session: {
-      async create() {
-        return { data: { id: 'session-semantic-check-1' } };
-      },
-      async delete(payload) {
-        deleteCalls.push(payload);
-        return { data: { ok: true } };
-      },
-      async prompt(payload) {
-        promptCalls.push(payload);
-        if (payload?.body?.parts?.[0]?.text?.includes(SEMANTIC_CHECK_MARKER)) {
-          return { data: { parts: [{ type: 'text', text: 'YES' }] } };
-        }
-        return { data: { ok: true } };
-      },
-      async messages({ path }) {
-        return { data: messagesBySession[path.id] || [] };
-      },
-    },
-    question: {
-      async reply() {
-        return { data: { ok: true } };
-      },
-      async reject() {
-        return { data: { ok: true } };
-      },
-    },
-    app: {
-      async log() {},
-    },
-  };
-
-  const runtime = createContinueNudgeRuntime(client, {
-    semanticFallback: {
-      enabled: true,
-      mode: 'out_of_band',
-      model: 'github-copilot/gpt-5.3-codex-mini',
-      timeoutMs: 2000,
-      maxChecksPerSession: 1,
-    },
-  });
-
-  await runtime.event({
-    event: {
-      type: 'session.idle',
-      properties: { sessionID: 'session-semantic-oob' },
-    },
-  });
-
-  assert.equal(promptCalls.length, 2);
-  assert.equal(promptCalls[0].path.id, 'session-semantic-check-1');
-  assert.equal(deleteCalls.length, 1);
-  assert.deepEqual(deleteCalls[0], { path: { id: 'session-semantic-check-1' } });
-  assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic-oob'), {
-    inSession: 0,
-    outOfBand: 1,
-    fallbackToInSession: 0,
-  });
-});
-
-test('semantic fallback fails closed when out-of-band setup is unavailable', async () => {
-  const messagesBySession = {
-    'session-semantic-oob-fallback': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', 'Potential follow-up opportunity identified for this task.', 'assistant-1'),
-    ],
-  };
-
-  const promptCalls = [];
-  const client = {
-    session: {
-      async prompt(payload) {
-        promptCalls.push(payload);
-        if (payload?.body?.parts?.[0]?.text?.includes(SEMANTIC_CHECK_MARKER)) {
-          return { data: { parts: [{ type: 'text', text: 'YES' }] } };
-        }
-        return { data: { ok: true } };
-      },
-      async messages({ path }) {
-        return { data: messagesBySession[path.id] || [] };
-      },
-    },
-    question: {
-      async reply() {
-        return { data: { ok: true } };
-      },
-      async reject() {
-        return { data: { ok: true } };
-      },
-    },
-    app: {
-      async log() {},
-    },
-  };
-
-  const runtime = createContinueNudgeRuntime(client, {
-    semanticFallback: {
-      enabled: true,
-      mode: 'out_of_band',
-      model: 'github-copilot/gpt-5.3-codex-mini',
-      timeoutMs: 2000,
-      maxChecksPerSession: 1,
-    },
-  });
-
-  await runtime.event({
-    event: {
-      type: 'session.idle',
-      properties: { sessionID: 'session-semantic-oob-fallback' },
-    },
-  });
-
-  assert.equal(promptCalls.length, 0);
-  assert.deepEqual(runtime._debug.semanticClassifierStatsBySession.get('session-semantic-oob-fallback'), {
-    inSession: 0,
-    outOfBand: 1,
-    fallbackToInSession: 0,
-  });
 });
 
 test('aggressive preset catches broader continuation offers', () => {
@@ -945,123 +605,3 @@ test('question.asked respects explicit user opt-out instructions', async () => {
   assert.equal(promptCalls.length, 0);
 });
 
-test('default semantic classifier call is ignored for marker messages', async () => {
-  const { client, promptCalls } = createMockClient({
-    'session-semantic-marker': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', `${CONTINUATION_NUDGE_MARKER}\nContinue working now.`, 'assistant-1'),
-    ],
-  });
-
-  const runtime = createContinueNudgeRuntime(client, {
-    semanticFallback: { enabled: true, maxChecksPerSession: 2 },
-  });
-
-  await runtime.event({
-    event: {
-      type: 'session.idle',
-      properties: { sessionID: 'session-semantic-marker' },
-    },
-  });
-
-  assert.equal(promptCalls.length, 0);
-  assert.equal(runtime._debug.semanticChecksBySession.get('session-semantic-marker') || 0, 0);
-});
-
-test('session.completed flushes reliability artifacts in shadow mode', async () => {
-  const flushCalls = [];
-  const { client } = createMockClient({
-    'session-flush': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', 'Would you like me to implement the fix now?', 'assistant-1'),
-    ],
-  });
-
-  const runtime = createContinueNudgeRuntime(client, {
-    reliabilityRuntime: { enabled: true, flushOnSessionEnd: true, mode: 'shadow' },
-    reliabilityRuntimeFactory: () => ({
-      evaluateNudgeDecision: async ({ shouldNudge }) => ({ shouldNudge }),
-      flushSession: async (payload) => {
-        flushCalls.push(payload);
-        return {
-          wroteArtifacts: true,
-          verdict: 'pass',
-          reasonCodes: ['GATE_PASS'],
-          runId: 'run-1',
-        };
-      },
-      clearSession: () => {},
-    }),
-  });
-
-  await runtime.event({
-    event: {
-      type: 'session.completed',
-      properties: { info: { id: 'session-flush' } },
-    },
-  });
-
-  assert.equal(flushCalls.length, 1);
-  assert.equal(flushCalls[0].sessionId, 'session-flush');
-  assert.equal(Array.isArray(flushCalls[0].events), true);
-  assert.equal(flushCalls[0].events.length, 2);
-});
-
-test('enforce mode can block a nudge decision', async () => {
-  const { client, promptCalls } = createMockClient({
-    'session-enforce': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', 'Would you like me to implement the fix now?', 'assistant-1'),
-    ],
-  });
-
-  const runtime = createContinueNudgeRuntime(client, {
-    reliabilityRuntime: { enabled: true, mode: 'enforce' },
-    reliabilityRuntimeFactory: () => ({
-      evaluateNudgeDecision: async () => ({
-        shouldNudge: false,
-        reason: 'reduce_nudge_aggressiveness',
-      }),
-      flushSession: async () => ({ wroteArtifacts: false }),
-      clearSession: () => {},
-    }),
-  });
-
-  await runtime.event({
-    event: {
-      type: 'session.idle',
-      properties: { sessionID: 'session-enforce' },
-    },
-  });
-
-  assert.equal(promptCalls.length, 0);
-});
-
-test('reliability flush errors fail open without crashing event handling', async () => {
-  const { client } = createMockClient({
-    'session-flush-error': [
-      textMessage('user', 'Continue until done.', 'user-1'),
-      textMessage('assistant', 'Would you like me to implement the fix now?', 'assistant-1'),
-    ],
-  });
-
-  const runtime = createContinueNudgeRuntime(client, {
-    reliabilityRuntime: { enabled: true, flushOnSessionEnd: true },
-    reliabilityRuntimeFactory: () => ({
-      evaluateNudgeDecision: async ({ shouldNudge }) => ({ shouldNudge }),
-      flushSession: async () => {
-        throw new Error('flush failed');
-      },
-      clearSession: () => {},
-    }),
-  });
-
-  await assert.doesNotReject(async () => {
-    await runtime.event({
-      event: {
-        type: 'session.completed',
-        properties: { info: { id: 'session-flush-error' } },
-      },
-    });
-  });
-});

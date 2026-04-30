@@ -1,21 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { createReliabilityRuntime, resolveReliabilityRuntimeOptions } from './reliability-runtime.js';
-
 export const SYSTEM_REMINDER_MARKER = 'CONTINUE_NUDGE_SYSTEM_REMINDER';
 export const CONTINUATION_NUDGE_MARKER = 'CONTINUE_NUDGE_PLUGIN';
-export const SEMANTIC_CHECK_MARKER = 'CONTINUE_NUDGE_SEMANTIC_CHECK';
 export const DEFAULT_CONFIG_PATH = '.opencode/continue-nudge.json';
 export const DEFAULT_PRESET = 'balanced';
-
-const DEFAULT_SEMANTIC_FALLBACK_OPTIONS = {
-  enabled: false,
-  model: 'github-copilot/gpt-5.3-codex-mini',
-  mode: 'out_of_band',
-  timeoutMs: 4000,
-  maxChecksPerSession: 1,
-};
 
 const BASE_PERMISSION_SEEKING_PATTERNS = [
   /\bwould you like me to\b/i,
@@ -111,23 +100,7 @@ const DEFAULT_OPTIONS = {
   permissionSeekingPatterns: null,
   hardStopPatterns: null,
   userOptOutPatterns: null,
-  semanticFallback: null,
-  reliabilityRuntime: null,
 };
-
-const SEMANTIC_FALLBACK_CANDIDATE_PATTERNS = [
-  /\bnext\b/i,
-  /\bstep\b/i,
-  /\bfollow[-\s]?up\b/i,
-  /\bif you want\b/i,
-  /\bi can\b/i,
-  /\bi could\b/i,
-  /\bi(?:'|\u2019)?ll\b/i,
-  /\bi will\b/i,
-  /\bwould\b/i,
-  /\bshould\b/i,
-  /\bwant me\b/i,
-];
 
 export function normalizeText(value) {
   return String(value ?? '')
@@ -177,26 +150,6 @@ function testPattern(pattern, text) {
   return pattern.test(text);
 }
 
-function toFinitePositiveInteger(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  const normalized = Math.floor(parsed);
-  return normalized > 0 ? normalized : fallback;
-}
-
-export function resolveSemanticFallbackOptions(options = {}) {
-  const input = options && typeof options === 'object' ? options : {};
-  const base = DEFAULT_SEMANTIC_FALLBACK_OPTIONS;
-  const mode = base.mode;
-  return {
-    enabled: Boolean(input.enabled),
-    model: typeof input.model === 'string' && input.model.trim() ? input.model : base.model,
-    mode,
-    timeoutMs: toFinitePositiveInteger(input.timeoutMs, base.timeoutMs),
-    maxChecksPerSession: toFinitePositiveInteger(input.maxChecksPerSession, base.maxChecksPerSession),
-  };
-}
-
 export function resolveContinueNudgeOptions(options = {}) {
   const mergedOptions = { ...DEFAULT_OPTIONS, ...(options || {}) };
   const preset = mergedOptions.preset || DEFAULT_PRESET;
@@ -222,8 +175,6 @@ export function resolveContinueNudgeOptions(options = {}) {
     ),
     hardStopPatterns: compilePatternList(mergedOptions.hardStopPatterns, presetOptions.hardStopPatterns),
     userOptOutPatterns: compilePatternList(mergedOptions.userOptOutPatterns, presetOptions.userOptOutPatterns),
-    semanticFallback: resolveSemanticFallbackOptions(mergedOptions.semanticFallback),
-    reliabilityRuntime: resolveReliabilityRuntimeOptions(mergedOptions.reliabilityRuntime),
   };
 }
 
@@ -274,33 +225,6 @@ export function buildQuestionAutoAnswer() {
   return `${CONTINUATION_NUDGE_MARKER}\nChoose the next obvious option yourself and continue the work without asking me to pick, unless I explicitly told you to decide or you are blocked by a real external constraint.`;
 }
 
-export function buildSemanticCheckPrompt(assistantText, latestUserText = '') {
-  const normalizedAssistant = normalizeText(assistantText);
-  const normalizedUser = normalizeText(latestUserText);
-  const userSection = normalizedUser ? `Latest user message: "${normalizedUser}"\n` : '';
-  return `${SEMANTIC_CHECK_MARKER}\nClassify if this assistant message is permission-seeking and should be nudged to continue.\nReturn exactly one token: YES or NO.\n${userSection}Assistant message: "${normalizedAssistant}"`;
-}
-
-function parseSemanticDecision(value) {
-  const normalized = normalizeText(value).toUpperCase();
-  if (!normalized) return null;
-  const firstToken = normalized.match(/[A-Z]+/)?.[0] || '';
-  if (firstToken === 'YES') return true;
-  if (firstToken === 'NO') return false;
-  return null;
-}
-
-function parseModelReference(model) {
-  const value = normalizeText(model);
-  if (!value) return null;
-  const slash = value.indexOf('/');
-  if (slash <= 0 || slash >= value.length - 1) return null;
-  return {
-    providerID: value.slice(0, slash),
-    modelID: value.slice(slash + 1),
-  };
-}
-
 function findLastByRole(messages, role) {
   if (!Array.isArray(messages)) return null;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -324,160 +248,27 @@ async function log(client, level, message, extra = {}) {
   });
 }
 
-async function createSemanticSession(client, originSessionId) {
-  if (!client?.session?.create) return null;
-
-  const attempts = [
-    () => client.session.create({ title: `continue-nudge semantic check (${originSessionId})` }),
-    () => client.session.create({ body: { title: `continue-nudge semantic check (${originSessionId})` } }),
-    () => client.session.create({}),
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      const result = await attempt();
-      const sessionId =
-        result?.data?.id ||
-        result?.data?.session?.id ||
-        result?.data?.sessionID ||
-        result?.id ||
-        result?.session?.id ||
-        result?.sessionID ||
-        null;
-      if (sessionId) return sessionId;
-    } catch {
-      // Try the next signature.
-    }
-  }
-
-  return null;
-}
-
-async function deleteSemanticSession(client, sessionId) {
-  if (!sessionId || !client?.session?.delete) return;
-
-  const attempts = [
-    () => client.session.delete({ path: { id: sessionId } }),
-    () => client.session.delete({ id: sessionId }),
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      await attempt();
-      return;
-    } catch {
-      // Try the next signature.
-    }
-  }
-}
-
-async function defaultSemanticClassifier({
-  client,
-  assistantText,
-  latestUserText,
-  sessionId,
-  model,
-  mode,
-}) {
-  const parsedModel = parseModelReference(model);
-  const shouldUseOutOfBand = true;
-  let targetSessionId = sessionId;
-  let createdSessionId = null;
-
-  if (shouldUseOutOfBand) {
-    createdSessionId = await createSemanticSession(client, sessionId);
-    if (!createdSessionId) {
-      return {
-        decision: false,
-        modeUsed: 'out_of_band',
-        fallbackToInSession: false,
-      };
-    }
-    targetSessionId = createdSessionId;
-  }
-
-  try {
-    const promptResult = await client.session.prompt({
-      path: { id: targetSessionId },
-      body: {
-        noReply: false,
-        ...(parsedModel ? { model: parsedModel } : {}),
-        parts: [{ type: 'text', text: buildSemanticCheckPrompt(assistantText, latestUserText) }],
-      },
-    });
-
-    const modelText = extractTextFromParts(promptResult?.data?.parts || []);
-    const decision = parseSemanticDecision(modelText);
-    const modeUsed = shouldUseOutOfBand ? 'out_of_band' : 'in_session';
-    return {
-      decision: Boolean(decision),
-      modeUsed,
-      fallbackToInSession: false,
-    };
-  } finally {
-    if (createdSessionId) {
-      await deleteSemanticSession(client, createdSessionId);
-    }
-  }
-}
-
 export function createContinueNudgeRuntime(client, options = {}) {
   const config = resolveContinueNudgeOptions(options);
-  const reliabilityRuntimeFactory =
-    typeof options?.reliabilityRuntimeFactory === 'function'
-      ? options.reliabilityRuntimeFactory
-      : (payload) => createReliabilityRuntime(payload);
 
-  let reliabilityRuntime = {
-    evaluateNudgeDecision: async ({ shouldNudge }) => ({ shouldNudge: Boolean(shouldNudge) }),
-    flushSession: async () => ({ wroteArtifacts: false, reason: 'disabled' }),
-    clearSession: () => {},
-  };
-
-  try {
-    reliabilityRuntime = reliabilityRuntimeFactory({
-      options: config.reliabilityRuntime,
-      rootDir: options?.rootDir || process.cwd(),
-    });
-  } catch {
-    // Fail open for plugin behavior.
-  }
-
-  const semanticClassifier =
-    typeof options?.semanticClassifier === 'function'
-      ? options.semanticClassifier
-      : (input) => defaultSemanticClassifier({ client, ...input });
   const sessionsWithErrors = new Set();
   const nudgesBySession = new Map();
   const nudgedFingerprintsBySession = new Map();
   const nudgesInFlightBySession = new Set();
   const answeredQuestionsBySession = new Map();
-  const semanticChecksBySession = new Map();
-  const semanticCheckedFingerprintsBySession = new Map();
-  const semanticClassifierStatsBySession = new Map();
   const primedSessions = new Set();
-  const lastMessageBySession = new Map();
 
   function getSessionIdFromProperties(properties) {
     return properties?.info?.id ?? properties?.sessionID ?? null;
   }
 
-  function clearSessionCaches(sessionId) {
+  function clearSessionState(sessionId) {
     if (!sessionId) return;
     sessionsWithErrors.delete(sessionId);
     nudgesBySession.delete(sessionId);
     nudgedFingerprintsBySession.delete(sessionId);
     nudgesInFlightBySession.delete(sessionId);
     answeredQuestionsBySession.delete(sessionId);
-    semanticChecksBySession.delete(sessionId);
-    semanticCheckedFingerprintsBySession.delete(sessionId);
-    semanticClassifierStatsBySession.delete(sessionId);
-    lastMessageBySession.delete(sessionId);
-  }
-
-  function clearSessionState(sessionId) {
-    if (!sessionId) return;
-    clearSessionCaches(sessionId);
     primedSessions.delete(sessionId);
   }
 
@@ -518,7 +309,7 @@ export function createContinueNudgeRuntime(client, options = {}) {
       const sessionNudgeCount = nudgesBySession.get(sessionId) || 0;
       const seenFingerprints = nudgedFingerprintsBySession.get(sessionId) || new Set();
 
-      const shouldNudgeDirectly = shouldNudge({
+      const shouldSendNudge = shouldNudge({
         assistantText,
         latestUserText,
         nudgeCount: sessionNudgeCount,
@@ -528,124 +319,6 @@ export function createContinueNudgeRuntime(client, options = {}) {
         hardStopPatterns: config.hardStopPatterns,
         userOptOutPatterns: config.userOptOutPatterns,
       });
-
-      let shouldSendNudge = shouldNudgeDirectly;
-
-      if (!shouldSendNudge) {
-        const semanticChecks = semanticChecksBySession.get(sessionId) || 0;
-        const semanticSeen = semanticCheckedFingerprintsBySession.get(sessionId) || new Set();
-        const semanticEnabled = Boolean(config.semanticFallback?.enabled && semanticClassifier);
-        const canAttemptSemanticFallback =
-          semanticEnabled &&
-          semanticChecks < config.semanticFallback.maxChecksPerSession &&
-          !semanticSeen.has(messageFingerprint) &&
-          !seenFingerprints.has(messageFingerprint) &&
-          !assistantText.includes(CONTINUATION_NUDGE_MARKER) &&
-          !assistantText.includes(SYSTEM_REMINDER_MARKER) &&
-          !config.userOptOutPatterns.some((pattern) => testPattern(pattern, latestUserText)) &&
-          !config.hardStopPatterns.some((pattern) => testPattern(pattern, assistantText)) &&
-          SEMANTIC_FALLBACK_CANDIDATE_PATTERNS.some((pattern) => testPattern(pattern, assistantText));
-
-        if (canAttemptSemanticFallback) {
-          semanticSeen.add(messageFingerprint);
-          semanticCheckedFingerprintsBySession.set(sessionId, semanticSeen);
-          semanticChecksBySession.set(sessionId, semanticChecks + 1);
-
-          const timeoutMs = config.semanticFallback.timeoutMs;
-
-          try {
-            const decision = await Promise.race([
-              Promise.resolve(
-                semanticClassifier({
-                  assistantText,
-                  latestUserText,
-                  sessionId,
-                  messageFingerprint,
-                  model: config.semanticFallback.model,
-                  mode: 'out_of_band',
-                }),
-              ),
-              new Promise((resolve) => {
-                setTimeout(() => resolve(false), timeoutMs);
-              }),
-            ]);
-
-            const decisionObject =
-              decision && typeof decision === 'object' && !Array.isArray(decision) ? decision : null;
-            const classifierDecision = decisionObject ? decisionObject.decision : decision;
-            const modeUsed =
-              decisionObject?.modeUsed === 'out_of_band' || decisionObject?.modeUsed === 'in_session'
-                ? decisionObject.modeUsed
-                : 'out_of_band';
-            const fallbackToInSession = Boolean(decisionObject?.fallbackToInSession);
-
-            shouldSendNudge = Boolean(classifierDecision);
-
-            const stats = semanticClassifierStatsBySession.get(sessionId) || {
-              inSession: 0,
-              outOfBand: 0,
-              fallbackToInSession: 0,
-            };
-
-            if (modeUsed === 'out_of_band') {
-              stats.outOfBand += 1;
-            } else {
-              stats.inSession += 1;
-            }
-            if (fallbackToInSession) {
-              stats.fallbackToInSession += 1;
-            }
-            semanticClassifierStatsBySession.set(sessionId, stats);
-
-            await log(client, 'info', 'Semantic fallback evaluated message', {
-              sessionId,
-              messageFingerprint,
-              shouldSendNudge,
-              timeoutMs,
-              model: config.semanticFallback.model,
-              requestedMode: config.semanticFallback.mode,
-              modeUsed,
-              fallbackToInSession,
-              classifierStats: stats,
-            });
-          } catch (error) {
-            await log(client, 'warn', 'Semantic fallback failed', {
-              sessionId,
-              messageFingerprint,
-              error: String(error?.message || error),
-            });
-          }
-        }
-      }
-
-      if (shouldSendNudge) {
-        try {
-          const evaluated = await reliabilityRuntime.evaluateNudgeDecision({
-            sessionId,
-            shouldNudge: shouldSendNudge,
-            events: messages,
-            context: {
-              acpSmokePassed: true,
-              hardStopRespected: true,
-              phase: 'decision',
-            },
-          });
-
-          shouldSendNudge = Boolean(evaluated?.shouldNudge);
-
-          if (!shouldSendNudge) {
-            await log(client, 'info', 'Reliability runtime blocked continuation nudge', {
-              sessionId,
-              reason: evaluated?.reason || 'unknown',
-            });
-          }
-        } catch (error) {
-          await log(client, 'warn', 'Reliability runtime decision failed; falling back to default nudge behavior', {
-            sessionId,
-            error: String(error?.message || error),
-          });
-        }
-      }
 
       if (!shouldSendNudge) {
         return false;
@@ -746,55 +419,6 @@ export function createContinueNudgeRuntime(client, options = {}) {
     return true;
   }
 
-  async function flushReliability(sessionId, phase) {
-    if (!sessionId) return;
-    if (!config.reliabilityRuntime.enabled || !config.reliabilityRuntime.flushOnSessionEnd) return;
-    if (!reliabilityRuntime || typeof reliabilityRuntime.flushSession !== 'function') return;
-
-    let messages = [];
-    try {
-      const response = await client.session.messages({
-        path: { id: sessionId },
-      });
-      messages = Array.isArray(response?.data) ? response.data : [];
-    } catch (error) {
-      await log(client, 'warn', 'Failed to load session messages for reliability flush', {
-        sessionId,
-        phase,
-        error: String(error?.message || error),
-      });
-      return;
-    }
-
-    try {
-      const result = await reliabilityRuntime.flushSession({
-        sessionId,
-        events: messages,
-        context: {
-          acpSmokePassed: true,
-          hardStopRespected: true,
-          phase,
-        },
-      });
-
-      if (result?.wroteArtifacts) {
-        await log(client, 'info', 'Reliability artifacts written', {
-          sessionId,
-          phase,
-          runId: result.runId || null,
-          verdict: result.verdict || null,
-          reasonCodes: result.reasonCodes || [],
-        });
-      }
-    } catch (error) {
-      await log(client, 'warn', 'Reliability flush failed', {
-        sessionId,
-        phase,
-        error: String(error?.message || error),
-      });
-    }
-  }
-
   return {
     async event({ event }) {
       if (!event?.type) return;
@@ -816,12 +440,7 @@ export function createContinueNudgeRuntime(client, options = {}) {
 
       if (event.type === 'session.deleted') {
         const sessionId = getSessionIdFromProperties(event.properties);
-        if (!sessionId) return;
-        await flushReliability(sessionId, 'session.deleted');
-        clearSessionState(sessionId);
-        if (typeof reliabilityRuntime.clearSession === 'function') {
-          reliabilityRuntime.clearSession(sessionId);
-        }
+        if (sessionId) clearSessionState(sessionId);
         return;
       }
 
@@ -837,14 +456,12 @@ export function createContinueNudgeRuntime(client, options = {}) {
       if (event.type === 'session.idle') {
         const sessionId = getSessionIdFromProperties(event.properties);
         await nudgeSession(sessionId);
-        await flushReliability(sessionId, 'session.idle');
         return;
       }
 
       if (event.type === 'session.completed') {
         const sessionId = getSessionIdFromProperties(event.properties);
         await nudgeSession(sessionId);
-        await flushReliability(sessionId, 'session.completed');
         return;
       }
 
@@ -859,16 +476,10 @@ export function createContinueNudgeRuntime(client, options = {}) {
       nudgedFingerprintsBySession,
       nudgesInFlightBySession,
       answeredQuestionsBySession,
-      semanticChecksBySession,
-      semanticCheckedFingerprintsBySession,
-      semanticClassifierStatsBySession,
       primedSessions,
-      lastMessageBySession,
-      reliabilityRuntime,
       primeSession,
       nudgeSession,
       answerQuestion,
-      flushReliability,
     },
   };
 }

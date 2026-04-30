@@ -6,3 +6,4 @@ node_modules/
 .vscode/
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+.opencode/reliability/
